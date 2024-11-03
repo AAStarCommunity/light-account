@@ -7,10 +7,8 @@ import {SignatureChecker} from "@openzeppelin/contracts/utils/cryptography/Signa
 import {SIG_VALIDATION_FAILED} from "account-abstraction/core/Helpers.sol";
 import {IEntryPoint} from "account-abstraction/interfaces/IEntryPoint.sol";
 import {PackedUserOperation} from "account-abstraction/interfaces/PackedUserOperation.sol";
-
 import {BaseLightAccount} from "./common/BaseLightAccount.sol";
 import {CustomSlotInitializable} from "./common/CustomSlotInitializable.sol";
-import {BLSOpen} from "account-abstraction/samples/bls/lib/BLSOpen.sol";
 
 /// @title A simple ERC-4337 compatible smart contract account with a designated owner account.
 /// @dev Like eth-infinitism's SimpleAccount, but with the following changes:
@@ -126,21 +124,20 @@ contract LightAccount is BaseLightAccount, CustomSlotInitializable {
         bool isValidBLS = true;
         bool isValidRegular = true;
 
+        // 从 callData 中解析出原始调用数据和 signature3
+        (, bytes memory signature3) = abi.decode(userOp.callData, (bytes, bytes));
+
         // Check BLS signature (signature3) if exists
-        if (userOp.signature3.length > 0) {
+        if (signature3.length > 0) {
             // Parse BLS signature data
-            BLSSignatureData memory blsData = _parseBLSSignatureData(userOp.signature3);
-            
+            BLSSignatureData memory blsData = _parseBLSSignatureData(signature3);
+
             // Verify threshold
             require(blsData.nodeCount >= blsData.threshold, "Invalid threshold");
-            require(blsData.signatureType == uint8(SignatureType.BLS), "Invalid signature type");
-            
+            // require(blsData.signatureType == uint8(SignatureType.BLS), "Invalid signature type");
+
             // Verify BLS signature
-            isValidBLS = _isValidBLSSignature(
-                blsData.signatures[0],
-                blsData.pubkeys,
-                blsData.messages
-            );
+            isValidBLS = _isValidBLSSignature(blsData.signatures[0], blsData.pubkeys, blsData.messages);
         }
 
         // Check regular signature
@@ -161,7 +158,7 @@ contract LightAccount is BaseLightAccount, CustomSlotInitializable {
         } else {
             revert InvalidSignatureType();
         }
-        
+
         // Both signatures must be valid
         return _successToValidationData(isValidBLS && isValidRegular);
     }
@@ -208,17 +205,13 @@ contract LightAccount is BaseLightAccount, CustomSlotInitializable {
         } else if (signatureType == uint8(SignatureType.BLS)) {
             // Parse BLS signature data
             BLSSignatureData memory blsData = _parseBLSSignatureData(signature[1:]);
-            
+
             // Verify threshold
             require(blsData.nodeCount >= blsData.threshold, "Invalid threshold");
-            require(blsData.signatureType == uint8(SignatureType.BLS), "Invalid signature type");
-            
+            // require(blsData.signatureType == uint8(SignatureType.BLS), "Invalid signature type");
+
             // Verify BLS signature
-            return _isValidBLSSignature(
-                blsData.signatures[0],
-                blsData.pubkeys,
-                blsData.messages
-            );
+            return _isValidBLSSignature(blsData.signatures[0], blsData.pubkeys, blsData.messages);
         }
         revert InvalidSignatureType();
     }
@@ -226,7 +219,7 @@ contract LightAccount is BaseLightAccount, CustomSlotInitializable {
     /// @inheritdoc BaseLightAccount
     function _isValidBLSSignature(
         uint256[2] memory signature,
-        uint256[4][] memory pubkeys, 
+        uint256[4][] memory pubkeys,
         uint256[2][] memory messages
     ) internal view override returns (bool) {
         return super._isValidBLSSignature(signature, pubkeys, messages);
@@ -252,6 +245,21 @@ contract LightAccount is BaseLightAccount, CustomSlotInitializable {
         bytes32 position = _STORAGE_POSITION;
         assembly ("memory-safe") {
             storageStruct.slot := position
+        }
+    }
+
+    function validateUserOp(PackedUserOperation calldata userOp, bytes32 userOpHash, uint256 missingAccountFunds)
+        external
+        override
+        returns (uint256 validationData)
+    {
+        // 从 userOp.callData 中解析出原始调用数据和 signature3
+        (, bytes memory signature3) = abi.decode(userOp.callData, (bytes, bytes));
+
+        // 检查 BLS 签名
+        if (signature3.length > 0) {
+            BLSSignatureData memory blsData = _parseBLSSignatureData(signature3);
+            // ... 验证逻辑
         }
     }
 }
