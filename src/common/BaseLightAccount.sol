@@ -6,6 +6,8 @@ import {SIG_VALIDATION_FAILED, SIG_VALIDATION_SUCCESS} from "account-abstraction
 import {IEntryPoint} from "account-abstraction/interfaces/IEntryPoint.sol";
 import {PackedUserOperation} from "account-abstraction/interfaces/PackedUserOperation.sol";
 import {TokenCallbackHandler} from "account-abstraction/samples/callback/TokenCallbackHandler.sol";
+// import {BLSOpen} from "account-abstraction/samples/bls/lib/BLSOpen.sol";
+import {BLSOpen} from "../../lib/BLSOpen.sol";
 
 import {UUPSUpgradeable} from "../external/solady/UUPSUpgradeable.sol";
 import {ERC1271} from "./ERC1271.sol";
@@ -17,7 +19,8 @@ abstract contract BaseLightAccount is BaseAccount, TokenCallbackHandler, UUPSUpg
     enum SignatureType {
         EOA,
         CONTRACT,
-        CONTRACT_WITH_ADDR
+        CONTRACT_WITH_ADDR,
+        BLS
     }
 
     error ArrayLengthMismatch();
@@ -214,4 +217,150 @@ abstract contract BaseLightAccount is BaseAccount, TokenCallbackHandler, UUPSUpg
     function _authorizeUpgrade(address newImplementation) internal view override onlyAuthorized {
         (newImplementation);
     }
+
+    /// @notice BLS signature data structure
+    struct BLSSignatureData {
+        // uint8 signatureType; // Signature type at index 0
+        uint16 nodeCount; // Number of participating nodes
+        uint16 threshold; // Threshold count (currently same as nodeCount)
+        uint256[2][] signatures; // Array of signatures
+        uint256[4][] pubkeys; // Array of public keys
+        uint256[2][] messages; // Array of messages
+    }
+
+    /// @dev Parse BLS signature data from bytes
+    /// @param data Raw signature data
+    /// @return Parsed BLS signature data
+    function _parseBLSSignatureData(bytes memory data) internal pure returns (BLSSignatureData memory) {
+        require(data.length >= 5, "Invalid signature length"); // 1 byte for type + 4 bytes for counts
+
+        BLSSignatureData memory blsData;
+
+        // Parse signature type and counts
+        assembly {
+            let first5Bytes := mload(add(data, 32))
+            let signatureType := shr(248, first5Bytes) // First byte
+            let nodeCount := shr(232, shl(8, first5Bytes)) // Next 2 bytes
+            let threshold := shr(216, shl(24, first5Bytes)) // Next 2 bytes
+        }
+        // Correcting the assignment of parsed values to the struct
+        blsData.nodeCount = uint16(blsData.nodeCount); // Assigning the parsed value to the struct
+        blsData.threshold = uint16(blsData.threshold); // Assigning the parsed value to the struct
+
+        // Correcting the requirement check for signature type
+        require(blsData.nodeCount == blsData.threshold, "Invalid threshold");
+
+        uint256 offset = 4; // Adjusted offset to start after counts
+        uint256 itemSize = blsData.nodeCount;
+
+        // Parse signatures
+        blsData.signatures = new uint256[2][](itemSize);
+        for (uint256 i = 0; i < itemSize; i++) {
+            // Extract 32 bytes at a time using assembly for efficiency
+            assembly {
+                // Calculate the correct memory positions
+                let dataPtr := add(add(data, 0x20), offset) // data.offset -> add(data, 0x20)
+                let sig0 := mload(dataPtr)
+                let sig1 := mload(add(dataPtr, 0x20))
+
+                // Store in the signatures array
+                let sigArrayPtr := mload(add(blsData, 0x20)) // Get pointer to signatures array
+                let elementPtr := add(add(sigArrayPtr, 0x20), mul(i, 0x40)) // Calculate position for current element
+                mstore(elementPtr, sig0)
+                mstore(add(elementPtr, 0x20), sig1)
+            }
+            offset += 64;
+        }
+
+        // Parse public keys
+        blsData.pubkeys = new uint256[4][](itemSize);
+        for (uint256 i = 0; i < itemSize; i++) {
+            assembly {
+                // Calculate the base pointer for the current data position
+                let dataPtr := add(add(data, 0x20), offset)
+
+                // Load each 32-byte component
+                let pk0 := mload(dataPtr)
+                let pk1 := mload(add(dataPtr, 0x20))
+                let pk2 := mload(add(dataPtr, 0x40))
+                let pk3 := mload(add(dataPtr, 0x60))
+
+                // Get pointer to pubkeys array
+                let pubkeysArrayPtr := mload(add(blsData, 0x40)) // 0x40 is the slot for pubkeys in the struct
+                // Calculate position for current element
+                let elementPtr := add(add(pubkeysArrayPtr, 0x20), mul(i, 0x80)) // 0x80 = 4 * 32 bytes
+
+                // Store the values
+                mstore(elementPtr, pk0)
+                mstore(add(elementPtr, 0x20), pk1)
+                mstore(add(elementPtr, 0x40), pk2)
+                mstore(add(elementPtr, 0x60), pk3)
+            }
+            offset += 128; // Move offset forward by 4 * 32 bytes
+        }
+
+        // Parse messages
+        blsData.messages = new uint256[2][](itemSize);
+        for (uint256 i = 0; i < itemSize; i++) {
+            assembly {
+                // Calculate the base pointer for current data position
+                let dataPtr := add(add(data, 0x20), offset)
+
+                // Load the two 32-byte components
+                let msg0 := mload(dataPtr)
+                let msg1 := mload(add(dataPtr, 0x20))
+
+                // Get pointer to messages array
+                let messagesArrayPtr := mload(add(blsData, 0x60)) // 0x60 is the slot for messages in the struct
+                // Calculate position for current element
+                let elementPtr := add(add(messagesArrayPtr, 0x20), mul(i, 0x40)) // 0x40 = 2 * 32 bytes
+
+                // Store the values
+                mstore(elementPtr, msg0)
+                mstore(add(elementPtr, 0x20), msg1)
+            }
+            offset += 64; // Move offset forward by 2 * 32 bytes
+        }
+
+        return blsData;
+    }
+
+    /// @dev Validate BLS signature based on implementation from AAStarCommunity
+    /// Reference: https://github.com/AAStarCommunity/account-contracts/blob/developing/src/BLS.Verifier.sol
+    /// @param signature BLS signature
+    /// @param pubkeys Array of BLS public keys
+    /// @param messages Array of messages to verify
+    /// @return True if signature is valid
+    function _isValidBLSSignature(
+        uint256[2] memory signature,
+        uint256[4][] memory pubkeys,
+        uint256[2][] memory messages
+    ) internal view virtual returns (bool) {
+        // Verify array lengths match
+        require(pubkeys.length == messages.length, "Array length mismatch");
+        require(pubkeys.length > 0, "Empty arrays not allowed");
+
+        // Verify signature format
+        require(signature[0] < BLS_MODULUS && signature[1] < BLS_MODULUS, "Invalid signature format");
+
+        // Verify public keys format
+        for (uint256 i = 0; i < pubkeys.length; i++) {
+            require(
+                pubkeys[i][0] < BLS_MODULUS && pubkeys[i][1] < BLS_MODULUS && pubkeys[i][2] < BLS_MODULUS
+                    && pubkeys[i][3] < BLS_MODULUS,
+                "Invalid public key format"
+            );
+        }
+
+        // Verify messages format
+        for (uint256 i = 0; i < messages.length; i++) {
+            require(messages[i][0] < BLS_MODULUS && messages[i][1] < BLS_MODULUS, "Invalid message format");
+        }
+
+        // Call BLSOpen contract for signature verification
+        return BLSOpen.verifyMultiple(signature, pubkeys, messages);
+    }
+
+    // BLS modulus constant
+    uint256 constant BLS_MODULUS = 52435875175126190479447740508185965837690552500527637822603658699938581184513;
 }

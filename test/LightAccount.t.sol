@@ -14,6 +14,7 @@ import {SimpleAccount} from "account-abstraction/samples/SimpleAccount.sol";
 import {BaseLightAccount} from "../src/common/BaseLightAccount.sol";
 import {LightAccount} from "../src/LightAccount.sol";
 import {LightAccountFactory} from "../src/LightAccountFactory.sol";
+import {BLSOpen} from "account-abstraction/samples/bls/lib/BLSOpen.sol";
 
 contract LightAccountTest is Test {
     using stdStorage for StdStorage;
@@ -607,6 +608,118 @@ contract LightAccountTest is Test {
                 address(account)
             )
         );
+    }
+
+    function testValidateBLSSignature() public {
+        // Setup BLS test data
+        uint256[2] memory signature = [uint256(1), uint256(2)]; // Replace with valid signature
+        uint256[4][] memory pubkeys = new uint256[4][](1);
+        pubkeys[0] = [uint256(1), uint256(2), uint256(3), uint256(4)]; // Replace with valid pubkey
+        uint256[2][] memory messages = new uint256[2][](1);
+        messages[0] = [uint256(5), uint256(6)]; // Replace with valid message
+
+        // Create userOp with BLS signature
+        PackedUserOperation memory op = _getUnsignedOp(
+            abi.encodeCall(BaseLightAccount.execute, (address(lightSwitch), 0, abi.encodeCall(LightSwitch.turnOn, ())))
+        );
+        
+        op.signature = abi.encodePacked(
+            BaseLightAccount.SignatureType.BLS,
+            abi.encode(signature, pubkeys, messages)
+        );
+
+        PackedUserOperation[] memory ops = new PackedUserOperation[](1);
+        ops[0] = op;
+        
+        // Should succeed with valid BLS signature
+        entryPoint.handleOps(ops, BENEFICIARY);
+        assertTrue(lightSwitch.on());
+    }
+
+    function testRejectInvalidBLSSignature() public {
+        // Setup invalid BLS test data
+        uint256[2] memory signature = [uint256(0), uint256(0)]; 
+        uint256[4][] memory pubkeys = new uint256[4][](1);
+        pubkeys[0] = [uint256(0), uint256(0), uint256(0), uint256(0)];
+        uint256[2][] memory messages = new uint256[2][](1);
+        messages[0] = [uint256(0), uint256(0)];
+
+        PackedUserOperation memory op = _getUnsignedOp(
+            abi.encodeCall(BaseLightAccount.execute, (address(lightSwitch), 0, abi.encodeCall(LightSwitch.turnOn, ())))
+        );
+        
+        op.signature = abi.encodePacked(
+            BaseLightAccount.SignatureType.BLS,
+            abi.encode(signature, pubkeys, messages)
+        );
+
+        PackedUserOperation[] memory ops = new PackedUserOperation[](1);
+        ops[0] = op;
+        
+        // Should fail with invalid BLS signature
+        vm.expectRevert(abi.encodeWithSelector(IEntryPoint.FailedOp.selector, 0, "AA24 signature error"));
+        entryPoint.handleOps(ops, BENEFICIARY);
+        assertFalse(lightSwitch.on());
+    }
+
+    function testValidateBLSSignatureWithThreshold() public {
+        // Create test BLS signature data
+        uint16 nodeCount = 3;
+        uint16 threshold = 3;
+        
+        // Prepare signature data bytes - now includes signature type
+        bytes memory signature3 = new bytes(5 + (nodeCount * (64 + 128 + 64)));
+        
+        // Set signature type, node count and threshold
+        assembly {
+            mstore8(add(signature3, 32), uint8(3))  // SignatureType.BLS = 3
+            mstore8(add(signature3, 33), shr(8, nodeCount))
+            mstore8(add(signature3, 34), and(nodeCount, 0xff))
+            mstore8(add(signature3, 35), shr(8, threshold))
+            mstore8(add(signature3, 36), and(threshold, 0xff))
+        }
+        
+        // Fill test data for signatures, pubkeys, and messages
+        uint256 offset = 37; // Start after type and counts
+        for(uint i = 0; i < nodeCount; i++) {
+            // Add signature data
+            bytes memory sigData = abi.encode(uint256(i+1), uint256(i+2));
+            for(uint j = 0; j < 64; j++) {
+                signature3[offset + j] = sigData[j];
+            }
+            offset += 64;
+            
+            // Add pubkey data
+            bytes memory pubkeyData = abi.encode(
+                uint256(i+1), uint256(i+2), uint256(i+3), uint256(i+4)
+            );
+            for(uint j = 0; j < 128; j++) {
+                signature3[offset + j] = pubkeyData[j];
+            }
+            offset += 128;
+            
+            // Add message data
+            bytes memory msgData = abi.encode(uint256(i+5), uint256(i+6));
+            for(uint j = 0; j < 64; j++) {
+                signature3[offset + j] = msgData[j];
+            }
+            offset += 64;
+        }
+
+        // Create userOp with BLS signature
+        PackedUserOperation memory op = _getUnsignedOp(
+            abi.encodeCall(BaseLightAccount.execute, (address(lightSwitch), 0, abi.encodeCall(LightSwitch.turnOn, ())))
+        );
+        
+        op.signature = abi.encodePacked(BaseLightAccount.SignatureType.BLS);
+        op.signature3 = signature3;
+
+        PackedUserOperation[] memory ops = new PackedUserOperation[](1);
+        ops[0] = op;
+        
+        // Should succeed with valid BLS signature
+        entryPoint.handleOps(ops, BENEFICIARY);
+        assertTrue(lightSwitch.on());
     }
 }
 

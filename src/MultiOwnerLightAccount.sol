@@ -12,6 +12,7 @@ import {LinkedListSet, LinkedListSetLib} from "modular-account/libraries/LinkedL
 
 import {BaseLightAccount} from "./common/BaseLightAccount.sol";
 import {CustomSlotInitializable} from "./common/CustomSlotInitializable.sol";
+import {BLSOpen} from "account-abstraction/samples/bls/lib/BLSOpen.sol";
 
 /// @title A simple ERC-4337 compatible smart contract account with one or more designated owner accounts.
 /// @dev Like LightAccount, but multiple owners are supported. The account is initialized with a list of owners,
@@ -136,22 +137,48 @@ contract MultiOwnerLightAccount is BaseLightAccount, CustomSlotInitializable {
         override
         returns (uint256 validationData)
     {
+        bool isValidBLS = true;
+        bool isValidRegular = true;
+
+        // Check BLS signature (signature3) if exists
+        if (userOp.signature3.length > 0) {
+            // Parse BLS signature data
+            BLSSignatureData memory blsData = _parseBLSSignatureData(userOp.signature3);
+            
+            // Verify threshold
+            require(blsData.nodeCount >= blsData.threshold, "Invalid threshold");
+            require(blsData.signatureType == uint8(SignatureType.BLS), "Invalid signature type");
+            
+            // Verify BLS signature
+            isValidBLS = _isValidBLSSignature(
+                blsData.signatures[0],
+                blsData.pubkeys,
+                blsData.messages
+            );
+        }
+
+        // Check regular signature
         if (userOp.signature.length < 1) {
             revert InvalidSignatureType();
         }
+
         uint8 signatureType = uint8(userOp.signature[0]);
         if (signatureType == uint8(SignatureType.EOA)) {
             // EOA signature
             bytes32 signedHash = userOpHash.toEthSignedMessageHash();
             bytes memory signature = userOp.signature[1:];
-            return _successToValidationData(_isValidEOAOwnerSignature(signedHash, signature));
+            isValidRegular = _isValidEOAOwnerSignature(signedHash, signature);
         } else if (signatureType == uint8(SignatureType.CONTRACT_WITH_ADDR)) {
             // Contract signature with address
             address contractOwner = address(bytes20(userOp.signature[1:21]));
             bytes memory signature = userOp.signature[21:];
-            return _successToValidationData(_isValidContractOwnerSignatureNow(contractOwner, userOpHash, signature));
+            isValidRegular = _isValidContractOwnerSignatureNow(contractOwner, userOpHash, signature);
+        } else {
+            revert InvalidSignatureType();
         }
-        revert InvalidSignatureType();
+        
+        // Both signatures must be valid
+        return _successToValidationData(isValidBLS && isValidRegular);
     }
 
     /// @notice Check if the signature is a valid by an EOA owner for the given digest.
@@ -201,6 +228,20 @@ contract MultiOwnerLightAccount is BaseLightAccount, CustomSlotInitializable {
             // Contract signature with address
             address contractOwner = address(bytes20(signature[1:21]));
             return _isValidContractOwnerSignatureNow(contractOwner, replaySafeHash, signature[21:]);
+        } else if (signatureType == uint8(SignatureType.BLS)) {
+            // Parse BLS signature data
+            BLSSignatureData memory blsData = _parseBLSSignatureData(signature[1:]);
+            
+            // Verify threshold
+            require(blsData.nodeCount >= blsData.threshold, "Invalid threshold");
+            require(blsData.signatureType == uint8(SignatureType.BLS), "Invalid signature type");
+            
+            // Verify BLS signature
+            return _isValidBLSSignature(
+                blsData.signatures[0],
+                blsData.pubkeys,
+                blsData.messages
+            );
         }
         revert InvalidSignatureType();
     }
@@ -226,5 +267,14 @@ contract MultiOwnerLightAccount is BaseLightAccount, CustomSlotInitializable {
         assembly ("memory-safe") {
             storageStruct.slot := position
         }
+    }
+
+    /// @inheritdoc BaseLightAccount
+    function _isValidBLSSignature(
+        uint256[2] memory signature,
+        uint256[4][] memory pubkeys, 
+        uint256[2][] memory messages
+    ) internal view override returns (bool) {
+        return super._isValidBLSSignature(signature, pubkeys, messages);
     }
 }
