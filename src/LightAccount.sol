@@ -7,201 +7,83 @@ import {SignatureChecker} from "@openzeppelin/contracts/utils/cryptography/Signa
 import {SIG_VALIDATION_FAILED} from "account-abstraction/core/Helpers.sol";
 import {IEntryPoint} from "account-abstraction/interfaces/IEntryPoint.sol";
 import {PackedUserOperation} from "account-abstraction/interfaces/PackedUserOperation.sol";
-
 import {BaseLightAccount} from "./common/BaseLightAccount.sol";
 import {CustomSlotInitializable} from "./common/CustomSlotInitializable.sol";
+import {BLSOpen} from "../lib/BLSOpen.sol";
+import {BLSVerifier} from "./BLSVerifier.sol";
 
-/// @title A simple ERC-4337 compatible smart contract account with a designated owner account.
-/// @dev Like eth-infinitism's SimpleAccount, but with the following changes:
-///
-/// 1. Instead of the default storage slots, uses namespaced storage to avoid clashes when switching implementations.
-///
-/// 2. Ownership can be transferred via `transferOwnership`, similar to the behavior of an `Ownable` contract. This is
-/// a simple single-step operation, so care must be taken to ensure that the ownership is being transferred to the
-/// correct address.
-///
-/// 3. Supports [ERC-1271](https://eips.ethereum.org/EIPS/eip-1271) signature validation for both validating the
-/// signature on user operations and in exposing its own `isValidSignature` method. This only works when the owner of
-/// LightAccount also support ERC-1271.
-///
-/// ERC-4337's bundler validation rules limit the types of contracts that can be used as owners to validate user
-/// operation signatures. For example, the contract's `isValidSignature` function may not use any forbidden opcodes
-/// such as `TIMESTAMP` or `NUMBER`, and the contract may not be an ERC-1967 proxy as it accesses a constant
-/// implementation slot not associated with the account, violating storage access rules. This also means that the
-/// owner of a LightAccount may not be another LightAccount if you want to send user operations through a bundler.
-///
-/// 4. Event `SimpleAccountInitialized` renamed to `LightAccountInitialized`.
-///
-/// 5. Uses custom errors.
-contract LightAccount is BaseLightAccount, CustomSlotInitializable {
-    using ECDSA for bytes32;
-    using MessageHashUtils for bytes32;
+contract LightAccount is BaseLightAccount {
+    // 自定义错误
+    error InvalidBLSSignature();
+    error InvalidThreshold(uint256 threshold, uint256 nodeCount);
+    error InvalidSignatureLength();
 
-    /// @dev The version used for namespaced storage is not linked to the release version of the contract. Storage
-    /// versions will be updated only when storage layout changes are made.
-    /// keccak256(abi.encode(uint256(keccak256("light_account_v1.storage")) - 1)) & ~bytes32(uint256(0xff));
-    bytes32 internal constant _STORAGE_POSITION = 0x691ec1a18226d004c07c9f8e5c4a6ff15a7b38db267cf7e3c945aef8be512200;
-    /// @dev keccak256(abi.encode(uint256(keccak256("light_account_v1.initializable")) - 1)) & ~bytes32(uint256(0xff));
-    bytes32 internal constant _INITIALIZABLE_STORAGE_POSITION =
-        0x33e4b41198cc5b8053630ed667ea7c0c4c873f7fc8d9a478b5d7259cec0a4a00;
+    // BLS验证器
+    BLSVerifier public immutable blsVerifier;
 
-    struct LightAccountStorage {
-        address owner;
+    // BLS签名数据结构
+    struct BLSSignatureData {
+        uint256[2][] signatures;
+        uint256[4][] pubkeys;
+        uint256[2][] messages;
+        uint256 threshold;
+        uint256 nodeCount;
     }
 
-    /// @notice Emitted when this account is first initialized.
-    /// @param entryPoint The entry point.
-    /// @param owner The initial owner.
-    event LightAccountInitialized(IEntryPoint indexed entryPoint, address indexed owner);
-
-    /// @notice Emitted when this account's owner changes. Also emitted once at initialization, with a
-    /// `previousOwner` of 0.
-    /// @param previousOwner The previous owner.
-    /// @param newOwner The new owner.
-    event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
-
-    /// @dev The new owner is not a valid owner (e.g., `address(0)`, the account itself, or the current owner).
-    error InvalidOwner(address owner);
-
-    constructor(IEntryPoint entryPoint_) CustomSlotInitializable(_INITIALIZABLE_STORAGE_POSITION) {
-        _ENTRY_POINT = entryPoint_;
-        _disableInitializers();
+    constructor(BLSVerifier _verifier) {
+        blsVerifier = _verifier;
     }
 
-    /// @notice Called once as part of initialization, either during initial deployment or when first upgrading to
-    /// this contract.
-    /// @dev The `_ENTRY_POINT` member is immutable, to reduce gas consumption. To update the entry point address, a new
-    /// implementation of LightAccount must be deployed with the new entry point address, and then `upgradeToAndCall`
-    /// must be called to upgrade the implementation.
-    /// @param owner_ The initial owner of the account.
-    function initialize(address owner_) external virtual initializer {
-        _initialize(owner_);
+    // BLS签名解析函数
+    function _parseBLSSignatureData(bytes memory data) internal pure returns (BLSSignatureData memory blsData) {
+        (blsData.signatures, blsData.pubkeys, blsData.messages, blsData.threshold, blsData.nodeCount) =
+            abi.decode(data, (uint256[2][], uint256[4][], uint256[2][], uint256, uint256));
+
+        _validateBLSData(blsData);
+        return blsData;
     }
 
-    /// @notice Transfers ownership of the contract to a new account (`newOwner`). Can only be called by the current
-    /// owner or from the entry point via a user operation signed by the current owner.
-    /// @param newOwner The new owner.
-    function transferOwnership(address newOwner) external virtual onlyAuthorized {
-        if (newOwner == address(0) || newOwner == address(this)) {
-            revert InvalidOwner(newOwner);
+    // BLS数据验证
+    function _validateBLSData(BLSSignatureData memory data) internal pure {
+        if (data.pubkeys.length == 0 || data.messages.length == 0) {
+            revert InvalidSignatureLength();
         }
-        _transferOwnership(newOwner);
-    }
-
-    /// @notice Return the current owner of this account.
-    /// @return The current owner.
-    function owner() public view returns (address) {
-        return _getStorage().owner;
-    }
-
-    function _initialize(address owner_) internal virtual {
-        if (owner_ == address(0)) {
-            revert InvalidOwner(address(0));
+        if (data.threshold > data.nodeCount || data.threshold == 0) {
+            revert InvalidThreshold(data.threshold, data.nodeCount);
         }
-        _getStorage().owner = owner_;
-        emit LightAccountInitialized(_ENTRY_POINT, owner_);
-        emit OwnershipTransferred(address(0), owner_);
     }
 
-    function _transferOwnership(address newOwner) internal virtual {
-        LightAccountStorage storage _storage = _getStorage();
-        address oldOwner = _storage.owner;
-        if (newOwner == oldOwner) {
-            revert InvalidOwner(newOwner);
-        }
-        _storage.owner = newOwner;
-        emit OwnershipTransferred(oldOwner, newOwner);
+    // BLS签名验证
+    function _isValidBLSSignature(BLSSignatureData memory blsData) internal view returns (bool) {
+        return blsVerifier.verifyMultiple(blsData.signatures, blsData.pubkeys, blsData.messages);
     }
 
-    /// @dev Implement template method of BaseAccount.
-    /// Uses a modified version of `SignatureChecker.isValidSignatureNow` in which the digest is wrapped with an
-    /// "Ethereum Signed Message" envelope for the EOA-owner case but not in the ERC-1271 contract-owner case.
-    function _validateSignature(PackedUserOperation calldata userOp, bytes32 userOpHash)
-        internal
-        virtual
+    // 重写validateUserOp以支持BLS验证
+    function validateUserOp(PackedUserOperation calldata userOp, bytes32 userOpHash, uint256 missingAccountFunds)
+        external
         override
         returns (uint256 validationData)
     {
-        if (userOp.signature.length < 1) {
-            revert InvalidSignatureType();
+        // 1. 首先验证BLS签名（如果存在）
+        (, bytes memory signature3) = abi.decode(userOp.callData, (bytes, bytes));
+
+        if (signature3.length > 0) {
+            BLSSignatureData memory blsData = _parseBLSSignatureData(signature3);
+            bool isValidBLS = _isValidBLSSignature(blsData);
+            if (!isValidBLS) {
+                revert InvalidBLSSignature();
+            }
         }
-        uint8 signatureType = uint8(userOp.signature[0]);
-        if (signatureType == uint8(SignatureType.EOA)) {
-            // EOA signature
-            bytes32 signedHash = userOpHash.toEthSignedMessageHash();
-            bytes memory signature = userOp.signature[1:];
-            return _successToValidationData(_isValidEOAOwnerSignature(signedHash, signature));
-        } else if (signatureType == uint8(SignatureType.CONTRACT)) {
-            // Contract signature without address
-            bytes memory signature = userOp.signature[1:];
-            return _successToValidationData(_isValidContractOwnerSignatureNow(userOpHash, signature));
-        }
-        revert InvalidSignatureType();
-    }
 
-    /// @notice Check if the signature is a valid by the EOA owner for the given digest.
-    /// @dev Only supports 65-byte signatures, and uses the digest directly. Reverts if the signature is malformed.
-    /// @param digest The digest to be checked.
-    /// @param signature The signature to be checked.
-    /// @return True if the signature is valid and by the owner, false otherwise.
-    function _isValidEOAOwnerSignature(bytes32 digest, bytes memory signature) internal view returns (bool) {
-        address recovered = digest.recover(signature);
-        return recovered == owner();
-    }
+        // 2. 然后验证常规签名
+        validationData = _validateSignature(userOp, userOpHash);
 
-    /// @notice Check if the signature is a valid ERC-1271 signature by a contract owner for the given digest.
-    /// @param digest The digest to be checked.
-    /// @param signature The signature to be checked.
-    /// @return True if the signature is valid and by an owner, false otherwise.
-    function _isValidContractOwnerSignatureNow(bytes32 digest, bytes memory signature) internal view returns (bool) {
-        return SignatureChecker.isValidERC1271SignatureNow(owner(), digest, signature);
-    }
+        // 3. 验证和更新nonce
+        _validateAndUpdateNonce(userOp);
 
-    /// @dev The signature is valid if it is signed by the owner's private key (if the owner is an EOA) or if it is a
-    /// valid ERC-1271 signature from the owner (if the owner is a contract). Reverts if the signature is malformed.
-    /// Note that unlike the signature validation used in `validateUserOp`, this does **not** wrap the hash in an
-    /// "Ethereum Signed Message" envelope before checking the signature in the EOA-owner case.
-    function _isValidSignature(bytes32 replaySafeHash, bytes calldata signature)
-        internal
-        view
-        virtual
-        override
-        returns (bool)
-    {
-        if (signature.length < 1) {
-            revert InvalidSignatureType();
-        }
-        uint8 signatureType = uint8(signature[0]);
-        if (signatureType == uint8(SignatureType.EOA)) {
-            // EOA signature
-            return _isValidEOAOwnerSignature(replaySafeHash, signature[1:]);
-        } else if (signatureType == uint8(SignatureType.CONTRACT)) {
-            // Contract signature without address
-            return _isValidContractOwnerSignatureNow(replaySafeHash, signature[1:]);
-        }
-        revert InvalidSignatureType();
-    }
+        // 4. 处理预付款
+        _payPrefund(missingAccountFunds);
 
-    function _domainNameAndVersion()
-        internal
-        view
-        virtual
-        override
-        returns (string memory name, string memory version)
-    {
-        name = "LightAccount";
-        // Set to the major version of the GitHub release at which the contract was last updated.
-        version = "2";
-    }
-
-    function _isFromOwner() internal view virtual override returns (bool) {
-        return msg.sender == owner();
-    }
-
-    function _getStorage() internal pure returns (LightAccountStorage storage storageStruct) {
-        bytes32 position = _STORAGE_POSITION;
-        assembly ("memory-safe") {
-            storageStruct.slot := position
-        }
+        return validationData;
     }
 }

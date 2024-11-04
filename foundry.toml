@@ -8,6 +8,17 @@ test = 'test'
 libs = ['lib']
 optimizer = true
 optimizer_runs = 10_000_000
+remappings = [
+    '@openzeppelin/=lib/openzeppelin-contracts/',
+    'account-abstraction/=lib/account-abstraction/contracts/',
+]
+
+# 添加预编译合约配置
+precompiles = [
+    "0x06=bls12_381_g1_add",
+    "0x07=bls12_381_g1_mul", 
+    "0x08=bls12_381_pairing"
+]
 
 [fuzz]
 runs = 5000

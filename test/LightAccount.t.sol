@@ -608,6 +608,170 @@ contract LightAccountTest is Test {
             )
         );
     }
+
+    // 模拟BLS签名数据
+    function _mockBLSSignatureData() internal pure returns (bytes memory) {
+        // 创建示例数据
+        uint256[2][] memory signatures = new uint256[2][](1);
+        signatures[0] = [uint256(1), uint256(2)];
+        
+        uint256[4][] memory pubkeys = new uint256[4][](1);
+        pubkeys[0] = [uint256(1), uint256(2), uint256(3), uint256(4)];
+        
+        uint256[2][] memory messages = new uint256[2][](1);
+        messages[0] = [uint256(1), uint256(2)];
+        
+        return abi.encode(
+            signatures,
+            pubkeys,
+            messages,
+            uint256(1), // threshold
+            uint256(1)  // nodeCount
+        );
+    }
+
+    function testBLSSignatureValidation() public {
+        // 准备带有BLS签名的UserOperation
+        PackedUserOperation memory op = _getUnsignedOp(
+            abi.encodeCall(
+                BaseLightAccount.execute, 
+                (address(lightSwitch), 0, abi.encodeCall(LightSwitch.turnOn, ()))
+            )
+        );
+        
+        // 添加BLS签名数据
+        bytes memory blsSignature = _mockBLSSignatureData();
+        op.callData = abi.encode(op.callData, blsSignature);
+        
+        // 添加常规签名
+        op.signature = abi.encodePacked(
+            BaseLightAccount.SignatureType.EOA,
+            _sign(EOA_PRIVATE_KEY, entryPoint.getUserOpHash(op).toEthSignedMessageHash())
+        );
+
+        PackedUserOperation[] memory ops = new PackedUserOperation[](1);
+        ops[0] = op;
+        
+        // 执行操作应该成功
+        entryPoint.handleOps(ops, BENEFICIARY);
+        assertTrue(lightSwitch.on());
+    }
+    
+    function testInvalidBLSSignature() public {
+        // 准备带有无效BLS签名的UserOperation
+        PackedUserOperation memory op = _getUnsignedOp(
+            abi.encodeCall(
+                BaseLightAccount.execute,
+                (address(lightSwitch), 0, abi.encodeCall(LightSwitch.turnOn, ()))
+            )
+        );
+        
+        // 创建无效的BLS签名数据
+        uint256[2][] memory signatures = new uint256[2][](0); // 空签名
+        uint256[4][] memory pubkeys = new uint256[4][](1);
+        uint256[2][] memory messages = new uint256[2][](1);
+        
+        bytes memory invalidBlsSignature = abi.encode(
+            signatures,
+            pubkeys,
+            messages,
+            uint256(1),
+            uint256(1)
+        );
+        
+        op.callData = abi.encode(op.callData, invalidBlsSignature);
+        op.signature = abi.encodePacked(
+            BaseLightAccount.SignatureType.EOA,
+            _sign(EOA_PRIVATE_KEY, entryPoint.getUserOpHash(op).toEthSignedMessageHash())
+        );
+
+        PackedUserOperation[] memory ops = new PackedUserOperation[](1);
+        ops[0] = op;
+        
+        // 应该因为无效的BLS签名而失败
+        vm.expectRevert(abi.encodeWithSelector(LightAccount.InvalidSignatureLength.selector));
+        entryPoint.handleOps(ops, BENEFICIARY);
+    }
+    
+    function testThresholdValidation() public {
+        // 准备带有无效阈值的UserOperation
+        PackedUserOperation memory op = _getUnsignedOp(
+            abi.encodeCall(
+                BaseLightAccount.execute,
+                (address(lightSwitch), 0, abi.encodeCall(LightSwitch.turnOn, ()))
+            )
+        );
+        
+        // 创建无效阈值的BLS签名数据
+        uint256[2][] memory signatures = new uint256[2][](1);
+        uint256[4][] memory pubkeys = new uint256[4][](1);
+        uint256[2][] memory messages = new uint256[2][](1);
+        
+        bytes memory invalidThresholdData = abi.encode(
+            signatures,
+            pubkeys,
+            messages,
+            uint256(2), // threshold > nodeCount
+            uint256(1)  // nodeCount
+        );
+        
+        op.callData = abi.encode(op.callData, invalidThresholdData);
+        op.signature = abi.encodePacked(
+            BaseLightAccount.SignatureType.EOA,
+            _sign(EOA_PRIVATE_KEY, entryPoint.getUserOpHash(op).toEthSignedMessageHash())
+        );
+
+        PackedUserOperation[] memory ops = new PackedUserOperation[](1);
+        ops[0] = op;
+        
+        // 应该因为无效的阈值而失败
+        vm.expectRevert(abi.encodeWithSelector(LightAccount.InvalidThreshold.selector, 2, 1));
+        entryPoint.handleOps(ops, BENEFICIARY);
+    }
+    
+    function testMultipleSignatures() public {
+        // 准备带有多个BLS签名的UserOperation
+        PackedUserOperation memory op = _getUnsignedOp(
+            abi.encodeCall(
+                BaseLightAccount.execute,
+                (address(lightSwitch), 0, abi.encodeCall(LightSwitch.turnOn, ()))
+            )
+        );
+        
+        // 创建多重签名数据
+        uint256[2][] memory signatures = new uint256[2][](2);
+        signatures[0] = [uint256(1), uint256(2)];
+        signatures[1] = [uint256(3), uint256(4)];
+        
+        uint256[4][] memory pubkeys = new uint256[4][](2);
+        pubkeys[0] = [uint256(1), uint256(2), uint256(3), uint256(4)];
+        pubkeys[1] = [uint256(5), uint256(6), uint256(7), uint256(8)];
+        
+        uint256[2][] memory messages = new uint256[2][](2);
+        messages[0] = [uint256(1), uint256(2)];
+        messages[1] = [uint256(3), uint256(4)];
+        
+        bytes memory multiSigData = abi.encode(
+            signatures,
+            pubkeys,
+            messages,
+            uint256(2), // threshold
+            uint256(2)  // nodeCount
+        );
+        
+        op.callData = abi.encode(op.callData, multiSigData);
+        op.signature = abi.encodePacked(
+            BaseLightAccount.SignatureType.EOA,
+            _sign(EOA_PRIVATE_KEY, entryPoint.getUserOpHash(op).toEthSignedMessageHash())
+        );
+
+        PackedUserOperation[] memory ops = new PackedUserOperation[](1);
+        ops[0] = op;
+        
+        // 执行操作应该成功
+        entryPoint.handleOps(ops, BENEFICIARY);
+        assertTrue(lightSwitch.on());
+    }
 }
 
 contract LightSwitch {
