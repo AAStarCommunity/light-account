@@ -623,7 +623,7 @@ function _isValidBLSSignature(BLSSignatureData memory blsData) internal view ret
 
 2. **灵活性保持**
 - 支持预编译和纯 EVM 两种方式
-- 可通过验证器配置切换
+- 可通过验���器配置切换
 - 保持接口一致性
 
 3. **维护性改进**
@@ -667,3 +667,207 @@ LightAccount account = new LightAccount(verifier);
 - 保持向后兼容
 - 接口保持不变
 - 数据结构统一
+
+## 日期 2024-11-09
+
+### 测试方案实现
+
+#### 1. 测试结构设计
+
+1. **基础测试类**
+```solidity
+abstract contract BaseLightAccountTest is Test {
+    uint256 public constant EOA_PRIVATE_KEY = 1;
+    address payable public constant BENEFICIARY = payable(address(0xbe9ef1c1a2ee));
+    
+    address public eoaAddress;
+    LightAccount public account;
+    EntryPoint public entryPoint;
+    LightSwitch public lightSwitch;
+    
+    function setUp() public virtual {
+        eoaAddress = vm.addr(EOA_PRIVATE_KEY);
+        entryPoint = new EntryPoint();
+        lightSwitch = new LightSwitch();
+    }
+    
+    function createAccount(BLSVerifier verifier) internal returns (LightAccount) {
+        LightAccount newAccount = new LightAccount(verifier);
+        vm.deal(address(newAccount), 1 << 128);
+        return newAccount;
+    }
+}
+```
+
+#### 2. 原有功能测试 (LightAccountBase.t.sol)
+
+1. **基本功能测试**
+```solidity
+contract LightAccountBaseTest is BaseLightAccountTest {
+    function testExecuteCanBeCalledByOwner() public {
+        vm.prank(eoaAddress);
+        account.execute(address(lightSwitch), 0, abi.encodeCall(LightSwitch.turnOn, ()));
+        assertTrue(lightSwitch.on());
+    }
+}
+```
+
+#### 3. 预编译BLS验证测试 (LightAccountBLSPrecompiled.t.sol)
+
+1. **预编译模式设置**
+```solidity
+function setUp() public override {
+    super.setUp();
+    // 使用预编译模式部署验证器
+    BLSVerifier verifier = new BLSVerifier(BLSVerifier.VerifyMode.PRECOMPILED);
+    account = createAccount(verifier);
+}
+```
+
+2. **预编译验证测试**
+```solidity
+function testPrecompiledBLSValidation() public {
+    PackedUserOperation memory op = _getUnsignedOp(
+        abi.encodeCall(
+            BaseLightAccount.execute, 
+            (address(lightSwitch), 0, abi.encodeCall(LightSwitch.turnOn, ()))
+        )
+    );
+    
+    bytes memory blsSignature = _mockPrecompiledBLSData();
+    op.callData = abi.encode(op.callData, blsSignature);
+    
+    // ... [验证逻辑]
+}
+```
+
+#### 4. 链上BLS验证测试 (LightAccountBLSOnChain.t.sol)
+
+1. **纯EVM模式设置**
+```solidity
+function setUp() public override {
+    super.setUp();
+    // 使用纯EVM模式部署验证器
+    BLSVerifier verifier = new BLSVerifier(BLSVerifier.VerifyMode.PURE_EVM);
+    account = createAccount(verifier);
+}
+```
+
+2. **链上验证测试**
+```solidity
+function testOnChainBLSValidation() public {
+    PackedUserOperation memory op = _getUnsignedOp(
+        abi.encodeCall(
+            BaseLightAccount.execute, 
+            (address(lightSwitch), 0, abi.encodeCall(LightSwitch.turnOn, ()))
+        )
+    );
+    
+    bytes memory blsSignature = _mockOnChainBLSData();
+    op.callData = abi.encode(op.callData, blsSignature);
+    
+    // ... [验证逻辑]
+}
+```
+
+### 测试数据生成
+
+1. **预编译测试数据**
+```solidity
+function _mockPrecompiledBLSData() internal pure returns (bytes memory) {
+    uint256[2][] memory signatures = new uint256[2][](1);
+    signatures[0] = [uint256(1), uint256(2)];
+    
+    uint256[4][] memory pubkeys = new uint256[4][](1);
+    pubkeys[0] = [uint256(1), uint256(2), uint256(3), uint256(4)];
+    
+    uint256[2][] memory messages = new uint256[2][](1);
+    messages[0] = [uint256(1), uint256(2)];
+    
+    return abi.encode(
+        signatures,
+        pubkeys,
+        messages,
+        uint256(1),
+        uint256(1)
+    );
+}
+```
+
+2. **链上测试数据**
+```solidity
+function _mockOnChainBLSData() internal pure returns (bytes memory) {
+    // 类似预编译测试数据的结构
+    // 但可能需要不同的测试值
+}
+```
+
+### 测试场景覆盖
+
+1. **正常场景测试**
+- 基本功能验证
+- 预编译BLS验证
+- 链上BLS验证
+
+2. **异常场景测试**
+- 无效签名处理
+- 阈值验证失败
+- 长度不匹配验证
+
+3. **边界条件测试**
+- 空签名数组
+- 最大阈值测试
+- 多重签名验证
+
+### 运行测试方法
+
+1. **全部测试**
+```bash
+forge test
+```
+
+2. **分类测试**
+```bash
+# 测试原有功能
+forge test --match-contract LightAccountBaseTest
+
+# 测试预编译BLS验证
+forge test --match-contract LightAccountBLSPrecompiledTest
+
+# 测试链上BLS验证
+forge test --match-contract LightAccountBLSOnChainTest
+```
+
+### 注意事项
+
+1. **环境要求**
+- Foundry工具链
+- 支持BLS预编译的网络配置
+- 正确的依赖版本
+
+2. **测试数据**
+- 使用模拟数据进行测试
+- 需要补充真实BLS签名数据
+- 考虑添加更多边界情况
+
+3. **性能考虑**
+- 预编译模式性能更好
+- 纯EVM模式gas消耗较大
+- 需要进行性能基准测试
+
+### 下一步计划
+
+1. **测试完善**
+- 添加更多边界测试用例
+- 使用真实BLS签名数据
+- 补充性能测试
+
+2. **CI/CD集成**
+- 添加自动化测试流程
+- 设置测试覆盖率要求
+- 添加性能基准测试
+
+3. **文档更新**
+- 补充测试说明文档
+- 添加测试数据生成说明
+- 完善测试运行指南

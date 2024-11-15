@@ -62,9 +62,10 @@ library BLSOpen {
         }
 
         // 调用预编译合约进行配对检查
+        address pairingCheck = PAIRING_CHECK;  // Load constant before assembly
         assembly {
             // 调用配对检查预编译
-            let success := staticcall(gas(), PAIRING_CHECK, add(input, 0x20), mul(k, 288), 0x00, 0x20)
+            let success := staticcall(gas(), pairingCheck, add(input, 0x20), mul(k, 288), 0x00, 0x20)
             
             // 验证调用成功
             if iszero(success) {

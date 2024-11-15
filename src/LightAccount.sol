@@ -30,6 +30,9 @@ contract LightAccount is BaseLightAccount {
         uint256 nodeCount;
     }
 
+    // Add this line near other state variables
+    uint256 private nonce;
+
     constructor(BLSVerifier _verifier) {
         blsVerifier = _verifier;
     }
@@ -85,5 +88,9 @@ contract LightAccount is BaseLightAccount {
         _payPrefund(missingAccountFunds);
 
         return validationData;
+    }
+
+    function _validateAndUpdateNonce(PackedUserOperation calldata userOp) internal {
+        require(userOp.nonce == nonce++, "Invalid nonce");
     }
 }
