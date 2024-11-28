@@ -623,7 +623,7 @@ function _isValidBLSSignature(BLSSignatureData memory blsData) internal view ret
 
 2. **灵活性保持**
 - 支持预编译和纯 EVM 两种方式
-- 可通过验���器配置切换
+- 可通过验器配置切换
 - 保持接口一致性
 
 3. **维护性改进**
@@ -871,3 +871,113 @@ forge test --match-contract LightAccountBLSOnChainTest
 - 补充测试说明文档
 - 添加测试数据生成说明
 - 完善测试运行指南
+
+## 日期 2024-11-10
+
+### 代码优化与简化
+
+#### 1. 移除 LightSwitch 相关代码
+
+1. **删除 LightSwitch.sol**
+- 移除独立的 LightSwitch 合约文件
+- 从测试文件中移除相关引用
+- 使用更简单的测试场景
+
+2. **简化测试用例**
+```solidity
+// 使用简单的转账测试替代 LightSwitch
+function testExecuteCanBeCalledByOwner() public {
+    address payable recipient = payable(address(0x123));
+    vm.prank(eoaAddress);
+    account.execute(recipient, 1 ether, "");
+    assertEq(recipient.balance, 1 ether);
+}
+```
+
+#### 2. 移除预编译依赖的链上 BLS 验证
+
+1. **移除 BLSOpen.sol**
+- 删除依赖预编译合约的实现
+- 保留纯 EVM 实现版本
+
+2. **修改 BLSVerifier 合约**
+```solidity
+contract BLSVerifier is IBLSVerifier {
+    function verifyMultiple(
+        uint256[2][] memory signatures,
+        uint256[4][] memory pubkeys,
+        uint256[2][] memory messages
+    ) external view override returns (bool) {
+        return BLSOpen2.verifyMultiple(signatures, pubkeys, messages);
+    }
+}
+```
+
+3. **更新配置文件**
+```toml
+# 移除预编译配置
+[profile.default]
+# ... 其他配置保持不变
+# 删除 precompiles 配置
+```
+
+### 优化说明
+
+1. **降低复杂度**
+- 移除非必要的测试合约
+- 简化测试场景
+- 减少外部依赖
+
+2. **提高可维护性**
+- 代码结构更清晰
+- 测试更加聚焦
+- 依赖更少
+
+3. **增强兼容性**
+- 不依赖预编译合约
+- 支持所有 EVM 兼容链
+- 实现更加通用
+
+### 执行步骤
+
+1. **清理代码**
+```bash
+# 删除不需要的文件
+rm src/LightSwitch.sol
+rm src/lib/BLSOpen.sol
+
+# 更新依赖
+forge update
+```
+
+2. **修改配置**
+```bash
+# 更新 foundry.toml
+# 删除预编译配置
+```
+
+3. **运行测试**
+```bash
+# 运行所有测试
+forge test
+
+# 运行特定测试
+forge test --match-contract LightAccountBaseTest
+```
+
+### 下一步计划
+
+1. **进一步优化**
+- 继续简化测试场景
+- 优化 gas 消耗
+- 改进错误处理
+
+2. **完善文档**
+- 更新测试说明
+- 补充部署指南
+- 添加示例说明
+
+3. **性能测试**
+- 添加基准测试
+- 对比不同实现
+- 优化关键路径
