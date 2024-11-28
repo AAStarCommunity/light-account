@@ -9,10 +9,11 @@ import {PackedUserOperation} from "account-abstraction/interfaces/PackedUserOper
 import {BaseLightAccount} from "../src/common/BaseLightAccount.sol";
 
 contract LightAccountBLSOnChainTest is BaseLightAccountTest {
-    uint256 constant EOA_PRIVATE_KEY = 1234; // Replace with your desired private key for testing
+    // string private EOA_PRIVATE_KEY;
     LightSwitch public lightSwitch;
 
     function setUp() public override {
+        EOA_PRIVATE_KEY = vm.envString("EOA_PRIVATE_KEY");
         super.setUp();
         // 使用纯EVM模式部署验证器
         BLSVerifier verifier = new BLSVerifier(BLSVerifier.VerifyMode.PURE_EVM);
@@ -28,12 +29,15 @@ contract LightAccountBLSOnChainTest is BaseLightAccountTest {
         bytes memory blsSignature = _mockOnChainBLSData();
         op.callData = abi.encode(op.callData, blsSignature);
 
+        // Correcting the signature assignment by using the correct function to sign the message
         op.signature = abi.encodePacked(
             BaseLightAccount.SignatureType.EOA,
-            _sign(EOA_PRIVATE_KEY, entryPoint.getUserOpHash(op).toEthSignedMessageHash())
+            vm.sign(EOA_PRIVATE_KEY, entryPoint.getUserOpHash(op).toEthSignedMessageHash())
         );
 
+        // Creating an array of PackedUserOperation to hold the operation
         PackedUserOperation[] memory ops = new PackedUserOperation[](1);
+        // Assigning the operation to the first element of the array
         ops[0] = op;
 
         entryPoint.handleOps(ops, BENEFICIARY);
