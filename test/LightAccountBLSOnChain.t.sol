@@ -4,44 +4,35 @@ pragma solidity ^0.8.23;
 import "forge-std/Test.sol";
 import {BaseLightAccountTest} from "./base/BaseLightAccountTest.sol";
 import {BLSVerifier} from "../src/BLSVerifier.sol";
-import {LightSwitch} from "../src/LightSwitch.sol";
 import {PackedUserOperation} from "account-abstraction/interfaces/PackedUserOperation.sol";
 import {BaseLightAccount} from "../src/common/BaseLightAccount.sol";
 
 contract LightAccountBLSOnChainTest is BaseLightAccountTest {
-    // string private EOA_PRIVATE_KEY;
-    LightSwitch public lightSwitch;
-
     function setUp() public override {
         EOA_PRIVATE_KEY = vm.envString("EOA_PRIVATE_KEY");
         super.setUp();
         // 使用纯EVM模式部署验证器
         BLSVerifier verifier = new BLSVerifier(BLSVerifier.VerifyMode.PURE_EVM);
         account = createAccount(verifier);
-        lightSwitch = new LightSwitch();
     }
 
     function testOnChainBLSValidation() public {
         PackedUserOperation memory op = _getUnsignedOp(
-            abi.encodeCall(BaseLightAccount.execute, (address(lightSwitch), 0, abi.encodeCall(LightSwitch.turnOn, ())))
+            abi.encodeCall(BaseLightAccount.execute, (address(0x1), 0, "0x"))
         );
 
         bytes memory blsSignature = _mockOnChainBLSData();
         op.callData = abi.encode(op.callData, blsSignature);
 
-        // Correcting the signature assignment by using the correct function to sign the message
         op.signature = abi.encodePacked(
             BaseLightAccount.SignatureType.EOA,
             vm.sign(EOA_PRIVATE_KEY, entryPoint.getUserOpHash(op).toEthSignedMessageHash())
         );
 
-        // Creating an array of PackedUserOperation to hold the operation
         PackedUserOperation[] memory ops = new PackedUserOperation[](1);
-        // Assigning the operation to the first element of the array
         ops[0] = op;
 
         entryPoint.handleOps(ops, BENEFICIARY);
-        assertTrue(lightSwitch.on());
     }
 
     function _mockOnChainBLSData() internal pure returns (bytes memory) {

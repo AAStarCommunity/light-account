@@ -13,26 +13,15 @@ abstract contract BaseLightAccountTest is Test {
     address public eoaAddress;
     LightAccount public account;
     EntryPoint public entryPoint;
-    LightSwitch public lightSwitch;
     
     function setUp() public virtual {
         eoaAddress = vm.addr(EOA_PRIVATE_KEY);
         entryPoint = new EntryPoint();
-        lightSwitch = new LightSwitch();
     }
     
     function createAccount(BLSVerifier verifier) internal returns (LightAccount) {
         LightAccount newAccount = new LightAccount(verifier);
         vm.deal(address(newAccount), 1 << 128);
         return newAccount;
-    }
-
-    // [共用的辅助函数...]
-}
-
-contract LightSwitch {
-    bool public on;
-    function turnOn() external payable {
-        on = true;
     }
 } 
