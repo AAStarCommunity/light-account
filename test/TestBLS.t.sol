@@ -3,7 +3,6 @@ pragma solidity ^0.8.23;
 
 import {Test} from "forge-std/Test.sol";
 import {BLS} from "../src/bls/BLS.sol";
-import {BNPairingPrecompileCostEstimator} from "../src/bls/BNPairingPrecompileCostEstimator.sol";
 
 contract TestBLS is Test {
     function testVerifySingle() public {
