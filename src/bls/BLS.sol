@@ -2,12 +2,13 @@
 pragma solidity ^0.8.23;
 
 import {ModexpInverse, ModexpSqrt} from "./ModExp.sol";
-
+import {IBLSRegistry} from "./IBLSRegistry.sol";
 /**
  * @title  Boneh–Lynn–Shacham (BLS) signature scheme on Barreto-Naehrig 254 bit curve (BN-254)
  *     @notice We use BLS signature aggregation to reduce the size of signature data to store on chain.
  *     @dev We use G1 points for signatures and messages, and G2 points for public keys
  */
+
 library BLS {
     // Field order
     // prettier-ignore
@@ -36,7 +37,22 @@ library BLS {
     uint256 private constant MASK24 = 0xffffffffffffffffffffffffffffffffffffffffffffffff;
 
     // estimator address
-    address private constant COST_ESTIMATOR_ADDRESS = 0x079d8077C465BD0BF0FC502aD2B846757e415661;
+    address private constant PUBLICKEY_ADDRESS = 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f;
+
+    function verifySingleRaw(bytes memory signature) internal view returns (bool) {
+        uint256[1] memory out;
+
+        bool success;
+        // solium-disable-next-line security/no-inline-assembly
+        assembly {
+            success := staticcall(sub(gas(), 2000), 8, add(signature, 0x20), 384, out, 0x20)
+            switch success
+            case 0 { invalid() }
+        }
+        require(success, "pairing-opcode-failed");
+
+        return out[0] != 0;
+    }
 
     function verifySingle(uint256[2] memory signature, uint256[4] memory pubkey, uint256[2] memory message)
         internal
@@ -63,6 +79,21 @@ library BLS {
         // solium-disable-next-line security/no-inline-assembly
         assembly {
             success := staticcall(sub(gas(), 2000), 8, input, 384, out, 0x20)
+            switch success
+            case 0 { invalid() }
+        }
+        require(success, "pairing-opcode-failed");
+
+        return out[0] != 0;
+    }
+
+    function verifyMultipleRaw(bytes memory signature) internal view returns (bool) {
+        uint256[1] memory out;
+
+        bool success;
+        // solium-disable-next-line security/no-inline-assembly
+        assembly {
+            success := staticcall(sub(gas(), 2000), 8, add(signature, 0x20), mul(mload(signature), 0x20), out, 0x20)
             switch success
             case 0 { invalid() }
         }
@@ -105,6 +136,66 @@ library BLS {
         require(success, "pairing-opcode-failed");
 
         return out[0] != 0;
+    }
+
+    function addressToPoint(address addr, uint256 nonce) internal view returns (uint256[2] memory) {
+        uint256 addressNumber = uint256(uint160(addr));
+        uint256 scalar = addressNumber + nonce;
+
+        uint256[] memory input = new uint256[](3);
+        input[0] = 1;
+        input[1] = 2;
+        input[2] = scalar;
+
+        uint256[2] memory out;
+        bool success;
+        assembly {
+            success := staticcall(sub(gas(), 2000), 7, add(input, 0x20), 96, out, 0x40)
+            switch success
+            case 0 { invalid() }
+        }
+
+        require(success, "pairing-mul-failed");
+        return out;
+    }
+
+    function getPublicKeyCount(bytes memory signature) internal pure returns (uint256 count) {
+        uint256 length = signature.length;
+        require(length % 192 == 0, "signature-length-err");
+
+        unchecked {
+            count = length / 192 - 1;
+        }
+
+        return count;
+    }
+
+    function verifyHm(bytes memory signature, uint256[2] memory point) internal pure returns (bool) {
+        uint256 HmX;
+        uint256 HmY;
+
+        assembly {
+            HmX := mload(add(signature, 0xe0))
+            HmY := mload(add(signature, 0x100))
+        }
+
+        return point[0] == HmX && point[1] == HmY;
+    }
+
+    function verifyPublicKey(bytes memory signature) internal view {
+        for (uint256 index = 0x120; index < signature.length; index += 0xc0) {
+            uint256 publicKeyXC0;
+            uint256 publicKeyXC1;
+
+            assembly {
+                publicKeyXC1 := mload(add(signature, index))
+                publicKeyXC0 := mload(add(signature, add(index, 0x20)))
+            }
+
+            require(
+                IBLSRegistry(PUBLICKEY_ADDRESS).isRegistered(publicKeyXC0, publicKeyXC1), "publickey-not-registered"
+            );
+        }
     }
 
     /**

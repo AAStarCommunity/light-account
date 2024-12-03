@@ -3,6 +3,7 @@ pragma solidity ^0.8.23;
 
 import {Test} from "forge-std/Test.sol";
 import {BLS} from "../src/bls/BLS.sol";
+import {BLSRegistry} from "../src/bls/BLSRegistry.sol";
 
 contract TestBLS is Test {
     function testVerifySingle() public {
@@ -42,6 +43,54 @@ contract TestBLS is Test {
         pubkeys[1][3] = 8672224877889847028316140878566877035079221330884430711148074915759574884527;
 
         (bool verified) = BLS.verifyMultiple(signature, pubkeys, message);
+        assertTrue(verified);
+    }
+
+    function testVerifySingleRaw() public {
+        bytes memory signature =
+            hex"254455e890c40ba691839d79d99f7825208db7820b62e07f8953626fb70e92a52eb655a812aa2eefc5d5f006f025493f61107d86b14fc8800d4b69898a20aef3198e9393920d483a7260bfb731fb5d25f1aa493335a9e71297e485b7aef312c21800deef121f1e76426a00665e5c4479674322d4f75edadd46debd5cd992f6ed090689d0585ff075ec9e99ad690c3395bc4b313370b38ef355acdadcd122975b12c85ea5db8c6deb4aab71808dcb408fe3d1e7690c43d37b4ce6cc0166fa7daa1bf37398cc9aac0d60817ecf371053e0c42ae1484eb55bf93b307a803e3109201e82321dcc0e522b4bf960ed79f9ef3eb7a9bd1d8aa3e4c9bb73db224dd1c12c005a1cd72e8d0ec241161ab40d0c1c1188fa83b5e77e23badcd5494e590e09d50f4ece61bb066391ab12e7731b2add632cf4706667a594999c11da1f046fb0ba07113de8ed64dfb0fd55befa1625fa4381ba2bcf11c8b3732782765c093926f613272156dfb6b0347a45dbe5e7d1863cd2ec69aa548e0541b4e7332ae06d6a62";
+
+        uint256 count = BLS.getPublicKeyCount(signature);
+        assertEq(count, 1);
+
+        (bool verified) = BLS.verifySingleRaw(signature);
+        assertTrue(verified);
+    }
+
+    function testVerifyMultipleRaw() public {
+        bytes memory signature =
+            hex"19c6f8343215804fbb2bf770fafc706b8d948c8e0ee58b3c228b6b67be3faf5222982ffc0dd469e0c4c6c079ae45ea9328a21b45737cd38c33b2eb8423df83ed198e9393920d483a7260bfb731fb5d25f1aa493335a9e71297e485b7aef312c21800deef121f1e76426a00665e5c4479674322d4f75edadd46debd5cd992f6ed090689d0585ff075ec9e99ad690c3395bc4b313370b38ef355acdadcd122975b12c85ea5db8c6deb4aab71808dcb408fe3d1e7690c43d37b4ce6cc0166fa7daa2bb94a3f4d6f704fb849553d87b5b93651d8152cd57e73ed64a21b522b314e960ea20bf13a799dac21705e6278111e721bdfcf0f46afadeb717ee391e75f34cf21c5a0ee154c229c8fdf165d9b90ec046b1f7563ab759a5a15edffe96a379d9f1f7aab9a23b0dcf65f14d488d0c993c9703ec5758866fe4bdb1d8c730d73212019431c2bcf3f15e6225ecf2a0c9275a21734035ec86628201a9925ac0e311fd0068c4db402d621b1a6688463c0c26722bca416b5b2567cc94c955dee80fc3ff02bb94a3f4d6f704fb849553d87b5b93651d8152cd57e73ed64a21b522b314e960ea20bf13a799dac21705e6278111e721bdfcf0f46afadeb717ee391e75f34cf1e83cd104e06aec06786fa449679f1743f31ce9798a60bcb949e1bd8442b01602a469fa5d851d96f88c36284864a19d352d46d1d55f4eca19039b9fc21a4b326300145541a374e2fe1a733b48a2792707319bafd341c06a62d2fe88de0a995c3007d3b002c5c430adf488a2ee7c92dfa564985c057091190619525efcc2e2f7a";
+
+        uint256 count = BLS.getPublicKeyCount(signature);
+        assertEq(count, 2);
+
+        (bool verified) = BLS.verifyMultipleRaw(signature);
+        assertTrue(verified);
+    }
+
+    function testVerifyAddressToPoint() public {
+        address addr = 0xffFFf81f71eA7EE991F28e281daC2c94A05d9532;
+        uint256 nonce = 1;
+
+        (uint256[2] memory point) = BLS.addressToPoint(addr, nonce);
+        assertEq(point[0], 3806601449978283847979492835955335268459070681944245864431543369346938791406);
+        assertEq(point[1], 14360417903182876005081265798501636616249427241913865510692119292639461538569);
+    }
+
+    function testVerifyHm() public {
+        uint256[2] memory point;
+
+        address addr = 0xffFFf81f71eA7EE991F28e281daC2c94A05d9532;
+        uint256 nonce = 1;
+
+        bytes memory signature =
+            hex"2d96a4ba23594e3b719e8dc3a49a6a9791489fe435c55200529272cb79dfdb681e2881337f73877391f721338f9fa0cc6f3962a3fb92b16fd70ed52b57d39da1198e9393920d483a7260bfb731fb5d25f1aa493335a9e71297e485b7aef312c21800deef121f1e76426a00665e5c4479674322d4f75edadd46debd5cd992f6ed090689d0585ff075ec9e99ad690c3395bc4b313370b38ef355acdadcd122975b12c85ea5db8c6deb4aab71808dcb408fe3d1e7690c43d37b4ce6cc0166fa7daa086a75c71d60537f5dee1c23feef0c21e7b9a3cbce88233013d34863cc7b65ee1fbfb560211849e8c70295044801891ccf197e98766d9d223651e3c0ad7c7b09005a1cd72e8d0ec241161ab40d0c1c1188fa83b5e77e23badcd5494e590e09d50f4ece61bb066391ab12e7731b2add632cf4706667a594999c11da1f046fb0ba07113de8ed64dfb0fd55befa1625fa4381ba2bcf11c8b3732782765c093926f613272156dfb6b0347a45dbe5e7d1863cd2ec69aa548e0541b4e7332ae06d6a62";
+
+        uint256 count = BLS.getPublicKeyCount(signature);
+        assertEq(count, 1);
+
+        point = BLS.addressToPoint(addr, nonce);
+        (bool verified) = BLS.verifyHm(signature, point);
         assertTrue(verified);
     }
 }
