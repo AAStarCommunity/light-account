@@ -93,7 +93,7 @@ library BLS {
         bool success;
         // solium-disable-next-line security/no-inline-assembly
         assembly {
-            success := staticcall(sub(gas(), 2000), 8, add(signature, 0x20), mul(mload(signature), 0x20), out, 0x20)
+            success := staticcall(sub(gas(), 2000), 8, add(signature, 0x20), mload(signature), out, 0x20)
             switch success
             case 0 { invalid() }
         }
@@ -196,6 +196,19 @@ library BLS {
                 IBLSRegistry(PUBLICKEY_ADDRESS).isRegistered(publicKeyXC0, publicKeyXC1), "publickey-not-registered"
             );
         }
+    }
+
+    function validateBLSSignature(address sender, uint256 nonce, bytes memory signature) internal view returns (bool) {
+        uint256[2] memory msgPoint = addressToPoint(sender, nonce);
+        require(verifyHm(signature, msgPoint), "msg-error");
+
+        uint256 publicKeysNumber = getPublicKeyCount(signature);
+        require(publicKeysNumber > 2, "publickey-number-error");
+
+        verifyPublicKey(signature);
+        require(verifyMultipleRaw(signature), "signature-error");
+
+        return true;
     }
 
     /**
