@@ -11,6 +11,8 @@ import {PackedUserOperation} from "account-abstraction/interfaces/PackedUserOper
 import {BaseLightAccount} from "./common/BaseLightAccount.sol";
 import {CustomSlotInitializable} from "./common/CustomSlotInitializable.sol";
 
+import {BLS} from "./bls/BLS.sol";
+
 /// @title A simple ERC-4337 compatible smart contract account with a designated owner account.
 /// @dev Like eth-infinitism's SimpleAccount, but with the following changes:
 ///
@@ -130,11 +132,19 @@ contract LightAccount is BaseLightAccount, CustomSlotInitializable {
             // EOA signature
             bytes32 signedHash = userOpHash.toEthSignedMessageHash();
             bytes memory signature = userOp.signature[1:];
+
             return _successToValidationData(_isValidEOAOwnerSignature(signedHash, signature));
         } else if (signatureType == uint8(SignatureType.CONTRACT)) {
             // Contract signature without address
             bytes memory signature = userOp.signature[1:];
             return _successToValidationData(_isValidContractOwnerSignatureNow(userOpHash, signature));
+        } else if (signatureType == uint8(SignatureType.BLS_EOA)) {
+            bytes32 signedHash = userOpHash.toEthSignedMessageHash();
+            (bytes memory eoaSignature, bytes memory blsSignature) = abi.decode(userOp.signature[1:], (bytes, bytes));
+            return _successToValidationData(
+                _isValidEOAOwnerSignature(signedHash, eoaSignature)
+                    && BLS.validateBLSSignature(signedHash, blsSignature)
+            );
         }
         revert InvalidSignatureType();
     }
@@ -178,6 +188,12 @@ contract LightAccount is BaseLightAccount, CustomSlotInitializable {
         } else if (signatureType == uint8(SignatureType.CONTRACT)) {
             // Contract signature without address
             return _isValidContractOwnerSignatureNow(replaySafeHash, signature[1:]);
+        } else if (signatureType == uint8(SignatureType.BLS_EOA)) {
+            (bytes memory eoaSignature, bytes memory blsSignature) = abi.decode(signature[1:], (bytes, bytes));
+            return (
+                _isValidEOAOwnerSignature(replaySafeHash, eoaSignature)
+                    && BLS.validateBLSSignature(replaySafeHash, blsSignature)
+            );
         }
         revert InvalidSignatureType();
     }

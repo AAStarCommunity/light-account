@@ -15,6 +15,9 @@ import {BaseLightAccount} from "../src/common/BaseLightAccount.sol";
 import {LightAccount} from "../src/LightAccount.sol";
 import {LightAccountFactory} from "../src/LightAccountFactory.sol";
 
+import {BLSRegistry} from "../src/bls/BLSRegistry.sol";
+import {BLSHelper} from "./BLSHelper.sol";
+
 contract LightAccountTest is Test {
     using stdStorage for StdStorage;
     using ECDSA for bytes32;
@@ -24,6 +27,8 @@ contract LightAccountTest is Test {
     address payable public constant BENEFICIARY = payable(address(0xbe9ef1c1a2ee));
     bytes32 internal constant _MESSAGE_TYPEHASH = keccak256("LightAccountMessage(bytes message)");
     address public eoaAddress;
+
+    BLSRegistry public register;
     LightAccount public account;
     EntryPoint public entryPoint;
     LightSwitch public lightSwitch;
@@ -34,6 +39,9 @@ contract LightAccountTest is Test {
     event Initialized(uint64 version);
 
     function setUp() public {
+        register = new BLSRegistry(address(this));
+        BLSHelper.registerTestPulicKey(register);
+
         eoaAddress = vm.addr(EOA_PRIVATE_KEY);
         entryPoint = new EntryPoint();
         LightAccountFactory factory = new LightAccountFactory(address(this), entryPoint);
@@ -58,6 +66,17 @@ contract LightAccountTest is Test {
 
     function testExecuteCanBeCalledByEntryPointWithExternalOwner() public {
         PackedUserOperation memory op = _getSignedOp(
+            abi.encodeCall(BaseLightAccount.execute, (address(lightSwitch), 0, abi.encodeCall(LightSwitch.turnOn, ()))),
+            EOA_PRIVATE_KEY
+        );
+        PackedUserOperation[] memory ops = new PackedUserOperation[](1);
+        ops[0] = op;
+        entryPoint.handleOps(ops, BENEFICIARY);
+        assertTrue(lightSwitch.on());
+    }
+
+    function testExecuteCanBeCalledByEntryPointWithExternalBLSOwner() public {
+        PackedUserOperation memory op = _getBLSSignedOp(
             abi.encodeCall(BaseLightAccount.execute, (address(lightSwitch), 0, abi.encodeCall(LightSwitch.turnOn, ()))),
             EOA_PRIVATE_KEY
         );
@@ -92,7 +111,7 @@ contract LightAccountTest is Test {
     }
 
     function testFuzz_rejectsUserOpsWithInvalidSignatureType(uint8 signatureType) public {
-        signatureType = uint8(bound(signatureType, 2, type(uint8).max));
+        signatureType = uint8(bound(signatureType, 4, type(uint8).max));
 
         PackedUserOperation memory op = _getUnsignedOp(
             abi.encodeCall(BaseLightAccount.execute, (address(lightSwitch), 0, abi.encodeCall(LightSwitch.turnOn, ())))
@@ -129,7 +148,7 @@ contract LightAccountTest is Test {
         );
         entryPoint.handleOps(ops, BENEFICIARY);
 
-        op.signature = abi.encodePacked(uint8(3));
+        op.signature = abi.encodePacked(uint8(4));
         vm.expectRevert(
             abi.encodeWithSelector(
                 IEntryPoint.FailedOpWithRevert.selector,
@@ -251,11 +270,42 @@ contract LightAccountTest is Test {
         assertEq(withdrawalAddress.balance, 5);
     }
 
+    function testWithdrawDepositCanBeCalledByEntryPointWithExternalBLSOwner() public {
+        account.addDeposit{value: 1 ether}();
+        address payable withdrawalAddress = payable(address(1));
+
+        PackedUserOperation memory op =
+            _getBLSSignedOp(abi.encodeCall(BaseLightAccount.withdrawDepositTo, (withdrawalAddress, 5)), EOA_PRIVATE_KEY);
+        PackedUserOperation[] memory ops = new PackedUserOperation[](1);
+        ops[0] = op;
+        entryPoint.handleOps(ops, BENEFICIARY);
+
+        assertEq(withdrawalAddress.balance, 5);
+    }
+
     function testWithdrawDepositCanBeCalledBySelf() public {
         account.addDeposit{value: 1 ether}();
         address payable withdrawalAddress = payable(address(1));
 
         PackedUserOperation memory op = _getSignedOp(
+            abi.encodeCall(
+                BaseLightAccount.execute,
+                (address(account), 0, abi.encodeCall(BaseLightAccount.withdrawDepositTo, (withdrawalAddress, 5)))
+            ),
+            EOA_PRIVATE_KEY
+        );
+        PackedUserOperation[] memory ops = new PackedUserOperation[](1);
+        ops[0] = op;
+        entryPoint.handleOps(ops, BENEFICIARY);
+
+        assertEq(withdrawalAddress.balance, 5);
+    }
+
+    function testWithdrawDepositCanBeCalledByBLSSelf() public {
+        account.addDeposit{value: 1 ether}();
+        address payable withdrawalAddress = payable(address(1));
+
+        PackedUserOperation memory op = _getBLSSignedOp(
             abi.encodeCall(
                 BaseLightAccount.execute,
                 (address(account), 0, abi.encodeCall(BaseLightAccount.withdrawDepositTo, (withdrawalAddress, 5)))
@@ -295,6 +345,18 @@ contract LightAccountTest is Test {
         address newOwner = address(0x100);
         PackedUserOperation memory op =
             _getSignedOp(abi.encodeCall(LightAccount.transferOwnership, (newOwner)), EOA_PRIVATE_KEY);
+        PackedUserOperation[] memory ops = new PackedUserOperation[](1);
+        ops[0] = op;
+        vm.expectEmit(true, true, false, false);
+        emit OwnershipTransferred(eoaAddress, newOwner);
+        entryPoint.handleOps(ops, BENEFICIARY);
+        assertEq(account.owner(), newOwner);
+    }
+
+    function testEntryPointBLSCanTransferOwnership() public {
+        address newOwner = address(0x100);
+        PackedUserOperation memory op =
+            _getBLSSignedOp(abi.encodeCall(LightAccount.transferOwnership, (newOwner)), EOA_PRIVATE_KEY);
         PackedUserOperation[] memory ops = new PackedUserOperation[](1);
         ops[0] = op;
         vm.expectEmit(true, true, false, false);
@@ -355,6 +417,14 @@ contract LightAccountTest is Test {
         assertEq(account.isValidSignature(message, signature), bytes4(keccak256("isValidSignature(bytes32,bytes)")));
     }
 
+    function testIsValidSignatureForBLS() public {
+        bytes32 message = keccak256("hello world");
+        bytes memory signature = abi.encodePacked(
+            BaseLightAccount.SignatureType.BLS_EOA, _blsSign(EOA_PRIVATE_KEY, _getMessageHash(abi.encode(message)))
+        );
+        assertEq(account.isValidSignature(message, signature), bytes4(keccak256("isValidSignature(bytes32,bytes)")));
+    }
+
     function testIsValidSignatureForContractOwner() public {
         _useContractOwner();
         bytes32 message = keccak256("hello world");
@@ -384,6 +454,26 @@ contract LightAccountTest is Test {
         // Missing SignatureType prefix
         signature = _sign(EOA_PRIVATE_KEY, _getMessageHash(abi.encode(message)));
         vm.expectRevert(abi.encodeWithSelector(BaseLightAccount.InvalidSignatureType.selector));
+        account.isValidSignature(message, signature);
+    }
+
+    function testIsValidBLSSignatureRejectsInvalid() public {
+        bytes32 message = keccak256("hello world");
+        bytes memory signature = abi.encodePacked(
+            BaseLightAccount.SignatureType.BLS_EOA, _blsSign(123, _getMessageHash(abi.encode(message)))
+        );
+        assertEq(account.isValidSignature(message, signature), bytes4(0xffffffff));
+
+        signature = abi.encodePacked(
+            BaseLightAccount.SignatureType.BLS_EOA, _blsSign(EOA_PRIVATE_KEY, _getMessageHash(abi.encode(message)))
+        );
+
+        // BLS PublicKey UnRegister
+        register.unregister(
+            10630432570328290075474895242881751387989826399304554704250628665511229896250,
+            17919728752616097025742957864412478070508797791854890034433031155819908323326
+        );
+        vm.expectRevert("publickey-not-registered");
         account.isValidSignature(message, signature);
     }
 
@@ -428,6 +518,35 @@ contract LightAccountTest is Test {
         IEntryPoint newEntryPoint = IEntryPoint(address(0x2000));
         SimpleAccount newImplementation = new SimpleAccount(newEntryPoint);
         PackedUserOperation memory op = _getSignedOp(
+            abi.encodeCall(
+                BaseLightAccount.execute,
+                (
+                    address(account),
+                    0,
+                    abi.encodeCall(
+                        account.upgradeToAndCall,
+                        (address(newImplementation), abi.encodeCall(SimpleAccount.initialize, (address(this))))
+                    )
+                )
+            ),
+            EOA_PRIVATE_KEY
+        );
+        PackedUserOperation[] memory ops = new PackedUserOperation[](1);
+        ops[0] = op;
+
+        vm.expectEmit(true, true, false, false);
+        emit SimpleAccountInitialized(newEntryPoint, address(this));
+        entryPoint.handleOps(ops, BENEFICIARY);
+
+        SimpleAccount upgradedAccount = SimpleAccount(payable(account));
+        assertEq(address(upgradedAccount.entryPoint()), address(newEntryPoint));
+    }
+
+    function testSelfBLSCanUpgrade() public {
+        // Upgrade to a normal SimpleAccount with a different entry point.
+        IEntryPoint newEntryPoint = IEntryPoint(address(0x2000));
+        SimpleAccount newImplementation = new SimpleAccount(newEntryPoint);
+        PackedUserOperation memory op = _getBLSSignedOp(
             abi.encodeCall(
                 BaseLightAccount.execute,
                 (
@@ -580,12 +699,30 @@ contract LightAccountTest is Test {
         op.signature = abi.encodePacked(
             BaseLightAccount.SignatureType.EOA, _sign(privateKey, entryPoint.getUserOpHash(op).toEthSignedMessageHash())
         );
+
+        return op;
+    }
+
+    function _getBLSSignedOp(bytes memory callData, uint256 privateKey) internal returns (PackedUserOperation memory) {
+        PackedUserOperation memory op = _getUnsignedOp(callData);
+        op.signature = abi.encodePacked(
+            BaseLightAccount.SignatureType.BLS_EOA,
+            _blsSign(privateKey, entryPoint.getUserOpHash(op).toEthSignedMessageHash())
+        );
         return op;
     }
 
     function _sign(uint256 privateKey, bytes32 digest) internal pure returns (bytes memory) {
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(privateKey, digest);
         return abi.encodePacked(r, s, v);
+    }
+
+    function _blsSign(uint256 privateKey, bytes32 digest) internal returns (bytes memory) {
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(privateKey, digest);
+        bytes memory eoaSignature = abi.encodePacked(r, s, v);
+        bytes memory blsSignature = BLSHelper.getBLSSignature(digest);
+
+        return abi.encode(eoaSignature, blsSignature);
     }
 
     /// @dev Purposefully redefined here to surface any necessary updates to client-side message preparation for

@@ -17,7 +17,8 @@ abstract contract BaseLightAccount is BaseAccount, TokenCallbackHandler, UUPSUpg
     enum SignatureType {
         EOA,
         CONTRACT,
-        CONTRACT_WITH_ADDR
+        CONTRACT_WITH_ADDR,
+        BLS_EOA
     }
 
     error ArrayLengthMismatch();
