@@ -7,14 +7,12 @@ import {BLSRegistry} from "../src/bls/BLSRegistry.sol";
 library BLSHelper {
     VmSafe private constant vm = VmSafe(address(uint160(uint256(keccak256("hevm cheat code")))));
 
-    function getBLSSignature(address sender, uint256 nonce) internal returns (bytes memory) {
-        string[] memory inputs = new string[](6);
+    function getBLSSignature(bytes32 digest) internal returns (bytes memory) {
+        string[] memory inputs = new string[](4);
         inputs[0] = "bun";
         inputs[1] = "utils/BLSSign.ts";
-        inputs[2] = "--address";
-        inputs[3] = vm.toString(sender);
-        inputs[4] = "--nonce";
-        inputs[5] = vm.toString(nonce);
+        inputs[2] = "--digest";
+        inputs[3] = vm.toString(digest);
 
         bytes memory res = vm.ffi(inputs);
 

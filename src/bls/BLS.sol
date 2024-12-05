@@ -138,14 +138,11 @@ library BLS {
         return out[0] != 0;
     }
 
-    function addressToPoint(address addr, uint256 nonce) internal view returns (uint256[2] memory) {
-        uint256 addressNumber = uint256(uint160(addr));
-        uint256 scalar = addressNumber + nonce;
-
+    function opHashToPoint(bytes32 digest) internal view returns (uint256[2] memory) {
         uint256[] memory input = new uint256[](3);
         input[0] = 1;
         input[1] = 2;
-        input[2] = scalar;
+        input[2] = uint256(digest) % N;
 
         uint256[2] memory out;
         bool success;
@@ -198,8 +195,8 @@ library BLS {
         }
     }
 
-    function validateBLSSignature(address sender, uint256 nonce, bytes memory signature) internal view returns (bool) {
-        uint256[2] memory msgPoint = addressToPoint(sender, nonce);
+    function validateBLSSignature(bytes32 digest, bytes memory signature) internal view returns (bool) {
+        uint256[2] memory msgPoint = opHashToPoint(digest);
         require(verifyHm(signature, msgPoint), "msg-error");
 
         uint256 publicKeysNumber = getPublicKeyCount(signature);

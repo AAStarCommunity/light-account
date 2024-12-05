@@ -15,9 +15,9 @@ const testPrivateKey = [
     "17c6c390e5cbabb10f10a92b94a7b73b0fe99ca3cf8e68d00b3d9dca75581967"
 ]
 
-export const getHm = (address: `0x${string}`, nonce: bigint) => {
+export const getHm = (opHash: bigint) => {
     const ORDER = BigInt('21888242871839275222246405745257275088696311157297823662689037894645226208583');
-    const hMNonce = mod(BigInt(address) + nonce, ORDER);
+    const hMNonce = mod(opHash, ORDER);
     const Hm = bn254.G1.ProjectivePoint.fromPrivateKey(hMNonce);
     return Hm;
 }
@@ -78,10 +78,7 @@ export const getAggSignatureCalldata = (
 const { values, positionals } = parseArgs({
     args: Bun.argv,
     options: {
-        address: {
-            type: 'string',
-        },
-        nonce: {
+        digest: {
             type: 'string',
         },
     },
@@ -92,7 +89,7 @@ const { values, positionals } = parseArgs({
 
 let sigPoints: ProjPointType<bigint>[] = [];
 let publicPoints: ProjPointType<Fp2>[] = [];
-const Hm = getHm(values.address as `0x${string}` || "0xc29FD138909e34ee815B1B57500Eb45F6Fa5853B", BigInt(values.nonce || "0"));
+const Hm = getHm(BigInt(values.digest || "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470"));
 
 for (let i = 0; i < 3; i++) {
     const privateKey = hexToBytes(testPrivateKey[i]);
