@@ -65,17 +65,6 @@ contract LightAccountTest is Test {
     }
 
     function testExecuteCanBeCalledByEntryPointWithExternalOwner() public {
-        PackedUserOperation memory op = _getSignedOp(
-            abi.encodeCall(BaseLightAccount.execute, (address(lightSwitch), 0, abi.encodeCall(LightSwitch.turnOn, ()))),
-            EOA_PRIVATE_KEY
-        );
-        PackedUserOperation[] memory ops = new PackedUserOperation[](1);
-        ops[0] = op;
-        entryPoint.handleOps(ops, BENEFICIARY);
-        assertTrue(lightSwitch.on());
-    }
-
-    function testExecuteCanBeCalledByEntryPointWithExternalBLSOwner() public {
         PackedUserOperation memory op = _getBLSSignedOp(
             abi.encodeCall(BaseLightAccount.execute, (address(lightSwitch), 0, abi.encodeCall(LightSwitch.turnOn, ()))),
             EOA_PRIVATE_KEY
@@ -100,7 +89,7 @@ contract LightAccountTest is Test {
     }
 
     function testRejectsUserOpsWithInvalidSignature() public {
-        PackedUserOperation memory op = _getSignedOp(
+        PackedUserOperation memory op = _getBLSSignedOp(
             abi.encodeCall(BaseLightAccount.execute, (address(lightSwitch), 0, abi.encodeCall(LightSwitch.turnOn, ()))),
             1234
         );
@@ -131,21 +120,14 @@ contract LightAccountTest is Test {
     }
 
     function testRevertsUserOpsWithMalformedSignature() public {
-        PackedUserOperation memory op = _getSignedOp(
+        PackedUserOperation memory op = _getBLSSignedOp(
             abi.encodeCall(BaseLightAccount.execute, (address(lightSwitch), 0, abi.encodeCall(LightSwitch.turnOn, ()))),
             1234
         );
-        op.signature = abi.encodePacked(BaseLightAccount.SignatureType.EOA, hex"aaaa");
+        op.signature = abi.encodePacked(BaseLightAccount.SignatureType.BLS_EOA, hex"aaaa");
         PackedUserOperation[] memory ops = new PackedUserOperation[](1);
         ops[0] = op;
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                IEntryPoint.FailedOpWithRevert.selector,
-                0,
-                "AA23 reverted",
-                abi.encodeWithSelector(ECDSA.ECDSAInvalidSignatureLength.selector, (op.signature.length - 1))
-            )
-        );
+        vm.expectRevert(abi.encodeWithSelector(IEntryPoint.FailedOpWithRevert.selector, 0, "AA23 reverted", ""));
         entryPoint.handleOps(ops, BENEFICIARY);
 
         op.signature = abi.encodePacked(uint8(4));
@@ -262,19 +244,6 @@ contract LightAccountTest is Test {
         address payable withdrawalAddress = payable(address(1));
 
         PackedUserOperation memory op =
-            _getSignedOp(abi.encodeCall(BaseLightAccount.withdrawDepositTo, (withdrawalAddress, 5)), EOA_PRIVATE_KEY);
-        PackedUserOperation[] memory ops = new PackedUserOperation[](1);
-        ops[0] = op;
-        entryPoint.handleOps(ops, BENEFICIARY);
-
-        assertEq(withdrawalAddress.balance, 5);
-    }
-
-    function testWithdrawDepositCanBeCalledByEntryPointWithExternalBLSOwner() public {
-        account.addDeposit{value: 1 ether}();
-        address payable withdrawalAddress = payable(address(1));
-
-        PackedUserOperation memory op =
             _getBLSSignedOp(abi.encodeCall(BaseLightAccount.withdrawDepositTo, (withdrawalAddress, 5)), EOA_PRIVATE_KEY);
         PackedUserOperation[] memory ops = new PackedUserOperation[](1);
         ops[0] = op;
@@ -284,24 +253,6 @@ contract LightAccountTest is Test {
     }
 
     function testWithdrawDepositCanBeCalledBySelf() public {
-        account.addDeposit{value: 1 ether}();
-        address payable withdrawalAddress = payable(address(1));
-
-        PackedUserOperation memory op = _getSignedOp(
-            abi.encodeCall(
-                BaseLightAccount.execute,
-                (address(account), 0, abi.encodeCall(BaseLightAccount.withdrawDepositTo, (withdrawalAddress, 5)))
-            ),
-            EOA_PRIVATE_KEY
-        );
-        PackedUserOperation[] memory ops = new PackedUserOperation[](1);
-        ops[0] = op;
-        entryPoint.handleOps(ops, BENEFICIARY);
-
-        assertEq(withdrawalAddress.balance, 5);
-    }
-
-    function testWithdrawDepositCanBeCalledByBLSSelf() public {
         account.addDeposit{value: 1 ether}();
         address payable withdrawalAddress = payable(address(1));
 
@@ -341,17 +292,17 @@ contract LightAccountTest is Test {
         assertEq(account.owner(), newOwner);
     }
 
-    function testEntryPointCanTransferOwnership() public {
-        address newOwner = address(0x100);
-        PackedUserOperation memory op =
-            _getSignedOp(abi.encodeCall(LightAccount.transferOwnership, (newOwner)), EOA_PRIVATE_KEY);
-        PackedUserOperation[] memory ops = new PackedUserOperation[](1);
-        ops[0] = op;
-        vm.expectEmit(true, true, false, false);
-        emit OwnershipTransferred(eoaAddress, newOwner);
-        entryPoint.handleOps(ops, BENEFICIARY);
-        assertEq(account.owner(), newOwner);
-    }
+    // function testEntryPointCanTransferOwnership() public {
+    //     address newOwner = address(0x100);
+    //     PackedUserOperation memory op =
+    //         _getSignedOp(abi.encodeCall(LightAccount.transferOwnership, (newOwner)), EOA_PRIVATE_KEY);
+    //     PackedUserOperation[] memory ops = new PackedUserOperation[](1);
+    //     ops[0] = op;
+    //     vm.expectEmit(true, true, false, false);
+    //     emit OwnershipTransferred(eoaAddress, newOwner);
+    //     entryPoint.handleOps(ops, BENEFICIARY);
+    //     assertEq(account.owner(), newOwner);
+    // }
 
     function testEntryPointBLSCanTransferOwnership() public {
         address newOwner = address(0x100);
@@ -367,7 +318,7 @@ contract LightAccountTest is Test {
 
     function testSelfCanTransferOwnership() public {
         address newOwner = address(0x100);
-        PackedUserOperation memory op = _getSignedOp(
+        PackedUserOperation memory op = _getBLSSignedOp(
             abi.encodeCall(
                 BaseLightAccount.execute,
                 (address(account), 0, abi.encodeCall(LightAccount.transferOwnership, (newOwner)))
@@ -409,13 +360,13 @@ contract LightAccountTest is Test {
         assertEq(address(account.entryPoint()), address(entryPoint));
     }
 
-    function testIsValidSignatureForEoaOwner() public {
-        bytes32 message = keccak256("hello world");
-        bytes memory signature = abi.encodePacked(
-            BaseLightAccount.SignatureType.EOA, _sign(EOA_PRIVATE_KEY, _getMessageHash(abi.encode(message)))
-        );
-        assertEq(account.isValidSignature(message, signature), bytes4(keccak256("isValidSignature(bytes32,bytes)")));
-    }
+    // function testIsValidSignatureForEoaOwner() public {
+    //     bytes32 message = keccak256("hello world");
+    //     bytes memory signature = abi.encodePacked(
+    //         BaseLightAccount.SignatureType.EOA, _sign(EOA_PRIVATE_KEY, _getMessageHash(abi.encode(message)))
+    //     );
+    //     assertEq(account.isValidSignature(message, signature), bytes4(keccak256("isValidSignature(bytes32,bytes)")));
+    // }
 
     function testIsValidSignatureForBLS() public {
         bytes32 message = keccak256("hello world");
@@ -434,28 +385,28 @@ contract LightAccountTest is Test {
         assertEq(account.isValidSignature(message, signature), bytes4(keccak256("isValidSignature(bytes32,bytes)")));
     }
 
-    function testIsValidSignatureRejectsInvalid() public {
-        bytes32 message = keccak256("hello world");
-        bytes memory signature =
-            abi.encodePacked(BaseLightAccount.SignatureType.EOA, _sign(123, _getMessageHash(abi.encode(message))));
-        assertEq(account.isValidSignature(message, signature), bytes4(0xffffffff));
+    // function testIsValidSignatureRejectsInvalid() public {
+    //     bytes32 message = keccak256("hello world");
+    //     bytes memory signature =
+    //         abi.encodePacked(BaseLightAccount.SignatureType.EOA, _sign(123, _getMessageHash(abi.encode(message))));
+    //     assertEq(account.isValidSignature(message, signature), bytes4(0xffffffff));
 
-        // Invalid length
-        signature =
-            abi.encodePacked(BaseLightAccount.SignatureType.EOA, hex"1234567890abcdef1234567890abcdef1234567890abcdef");
-        vm.expectRevert(abi.encodeWithSelector(ECDSA.ECDSAInvalidSignatureLength.selector, 24));
-        account.isValidSignature(message, signature);
+    //     // Invalid length
+    //     signature =
+    //         abi.encodePacked(BaseLightAccount.SignatureType.EOA, hex"1234567890abcdef1234567890abcdef1234567890abcdef");
+    //     vm.expectRevert(abi.encodeWithSelector(ECDSA.ECDSAInvalidSignatureLength.selector, 24));
+    //     account.isValidSignature(message, signature);
 
-        // 0 length
-        signature = abi.encodePacked(BaseLightAccount.SignatureType.EOA, hex"");
-        vm.expectRevert(abi.encodeWithSelector(ECDSA.ECDSAInvalidSignatureLength.selector, 0));
-        account.isValidSignature(message, signature);
+    //     // 0 length
+    //     signature = abi.encodePacked(BaseLightAccount.SignatureType.EOA, hex"");
+    //     vm.expectRevert(abi.encodeWithSelector(ECDSA.ECDSAInvalidSignatureLength.selector, 0));
+    //     account.isValidSignature(message, signature);
 
-        // Missing SignatureType prefix
-        signature = _sign(EOA_PRIVATE_KEY, _getMessageHash(abi.encode(message)));
-        vm.expectRevert(abi.encodeWithSelector(BaseLightAccount.InvalidSignatureType.selector));
-        account.isValidSignature(message, signature);
-    }
+    //     // Missing SignatureType prefix
+    //     signature = _sign(EOA_PRIVATE_KEY, _getMessageHash(abi.encode(message)));
+    //     vm.expectRevert(abi.encodeWithSelector(BaseLightAccount.InvalidSignatureType.selector));
+    //     account.isValidSignature(message, signature);
+    // }
 
     function testIsValidBLSSignatureRejectsInvalid() public {
         bytes32 message = keccak256("hello world");
@@ -495,7 +446,7 @@ contract LightAccountTest is Test {
         // Upgrade to a normal SimpleAccount with a different entry point.
         IEntryPoint newEntryPoint = IEntryPoint(address(0x2000));
         SimpleAccount newImplementation = new SimpleAccount(newEntryPoint);
-        PackedUserOperation memory op = _getSignedOp(
+        PackedUserOperation memory op = _getBLSSignedOp(
             abi.encodeCall(
                 account.upgradeToAndCall,
                 (address(newImplementation), abi.encodeCall(SimpleAccount.initialize, (address(this))))
@@ -514,35 +465,6 @@ contract LightAccountTest is Test {
     }
 
     function testSelfCanUpgrade() public {
-        // Upgrade to a normal SimpleAccount with a different entry point.
-        IEntryPoint newEntryPoint = IEntryPoint(address(0x2000));
-        SimpleAccount newImplementation = new SimpleAccount(newEntryPoint);
-        PackedUserOperation memory op = _getSignedOp(
-            abi.encodeCall(
-                BaseLightAccount.execute,
-                (
-                    address(account),
-                    0,
-                    abi.encodeCall(
-                        account.upgradeToAndCall,
-                        (address(newImplementation), abi.encodeCall(SimpleAccount.initialize, (address(this))))
-                    )
-                )
-            ),
-            EOA_PRIVATE_KEY
-        );
-        PackedUserOperation[] memory ops = new PackedUserOperation[](1);
-        ops[0] = op;
-
-        vm.expectEmit(true, true, false, false);
-        emit SimpleAccountInitialized(newEntryPoint, address(this));
-        entryPoint.handleOps(ops, BENEFICIARY);
-
-        SimpleAccount upgradedAccount = SimpleAccount(payable(account));
-        assertEq(address(upgradedAccount.entryPoint()), address(newEntryPoint));
-    }
-
-    function testSelfBLSCanUpgrade() public {
         // Upgrade to a normal SimpleAccount with a different entry point.
         IEntryPoint newEntryPoint = IEntryPoint(address(0x2000));
         SimpleAccount newImplementation = new SimpleAccount(newEntryPoint);

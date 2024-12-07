@@ -200,7 +200,7 @@ library BLS {
         require(verifyHm(signature, msgPoint), "msg-error");
 
         uint256 publicKeysNumber = getPublicKeyCount(signature);
-        require(publicKeysNumber > 2, "publickey-number-error");
+        require(publicKeysNumber > 1, "publickey-number-error");
 
         verifyPublicKey(signature);
         require(verifyMultipleRaw(signature), "signature-error");

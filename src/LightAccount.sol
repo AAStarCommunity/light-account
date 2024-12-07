@@ -130,10 +130,11 @@ contract LightAccount is BaseLightAccount, CustomSlotInitializable {
         uint8 signatureType = uint8(userOp.signature[0]);
         if (signatureType == uint8(SignatureType.EOA)) {
             // EOA signature
-            bytes32 signedHash = userOpHash.toEthSignedMessageHash();
-            bytes memory signature = userOp.signature[1:];
+            // bytes32 signedHash = userOpHash.toEthSignedMessageHash();
+            // bytes memory signature = userOp.signature[1:];
 
-            return _successToValidationData(_isValidEOAOwnerSignature(signedHash, signature));
+            // return _successToValidationData(_isValidEOAOwnerSignature(signedHash, signature));
+            revert InvalidSignatureType();
         } else if (signatureType == uint8(SignatureType.CONTRACT)) {
             // Contract signature without address
             bytes memory signature = userOp.signature[1:];
@@ -184,7 +185,8 @@ contract LightAccount is BaseLightAccount, CustomSlotInitializable {
         uint8 signatureType = uint8(signature[0]);
         if (signatureType == uint8(SignatureType.EOA)) {
             // EOA signature
-            return _isValidEOAOwnerSignature(replaySafeHash, signature[1:]);
+            // return _isValidEOAOwnerSignature(replaySafeHash, signature[1:]);
+            revert InvalidSignatureType();
         } else if (signatureType == uint8(SignatureType.CONTRACT)) {
             // Contract signature without address
             return _isValidContractOwnerSignatureNow(replaySafeHash, signature[1:]);
