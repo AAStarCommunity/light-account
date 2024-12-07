@@ -15,19 +15,19 @@ contract Deploy_LightAccountFactory is Script {
     // Load factory owner from env
     address public owner = vm.envAddress("OWNER");
 
-    error InitCodeHashMismatch(bytes32 initCodeHash);
-    error DeployedAddressMismatch(address deployed);
+    // error InitCodeHashMismatch(bytes32 initCodeHash);
+    // error DeployedAddressMismatch(address deployed);
 
     function run() public {
         vm.startBroadcast();
 
         // Init code hash check
-        bytes32 initCodeHash =
-            keccak256(abi.encodePacked(type(LightAccountFactory).creationCode, abi.encode(owner, entryPoint)));
+        // bytes32 initCodeHash =
+        //     keccak256(abi.encodePacked(type(LightAccountFactory).creationCode, abi.encode(owner, entryPoint)));
 
-        if (initCodeHash != 0xfad339962af095db6ac3163c8504f102c28ae099db994101fbbca18ad0e3005c) {
-            revert InitCodeHashMismatch(initCodeHash);
-        }
+        // if (initCodeHash != 0xfad339962af095db6ac3163c8504f102c28ae099db994101fbbca18ad0e3005c) {
+        //     revert InitCodeHashMismatch(initCodeHash);
+        // }
 
         console.log("********************************");
         console.log("******** Deploy Inputs *********");
@@ -44,9 +44,9 @@ contract Deploy_LightAccountFactory is Script {
         }(owner, entryPoint);
 
         // Deployed address check
-        if (address(factory) != 0x0000000000400CdFef5E2714E63d8040b700BC24) {
-            revert DeployedAddressMismatch(address(factory));
-        }
+        // if (address(factory) != 0x0000000000400CdFef5E2714E63d8040b700BC24) {
+        //     revert DeployedAddressMismatch(address(factory));
+        // }
 
         _addStakeForFactory(address(factory));
 

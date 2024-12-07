@@ -37,7 +37,8 @@ library BLS {
     uint256 private constant MASK24 = 0xffffffffffffffffffffffffffffffffffffffffffffffff;
 
     // estimator address
-    address private constant PUBLICKEY_ADDRESS = 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f;
+    // address private constant PUBLICKEY_ADDRESS = 0x5615dEB798BB3E4dFa0139dFa1b3D433Cc23b72f; // test
+    address private constant PUBLICKEY_ADDRESS = 0x03570242a9b7856284829e18dbA0c47CDD211B1b;
 
     function verifySingleRaw(bytes memory signature) internal view returns (bool) {
         uint256[1] memory out;
