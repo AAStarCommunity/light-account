@@ -7,13 +7,7 @@ import { parseArgs } from "util";
 
 const { Fp12 } = bn254.fields;
 
-const testPrivateKey = [
-    "189b092782fb8eec32783ddcbf9da2f9fb57c76c3a72ec77adc83d559b1671c5",
-    "2bd823d324a317aeba80adc25961777699e93dc004ca0f9d872b460d61929829",
-    "0706ea366edc43dacbca11b6083d36890f3150ecaa02f12eec40fe8e3d1f5502",
-    "1e2b123a407d3796a85dd9e9d5f94a71e6dad9a0680433bd09b38dcb0a2c6a59",
-    "17c6c390e5cbabb10f10a92b94a7b73b0fe99ca3cf8e68d00b3d9dca75581967"
-]
+const testPrivateKey = "189b092782fb8eec32783ddcbf9da2f9fb57c76c3a72ec77adc83d559b1671c5"
 
 export const getHm = (opHash: bigint) => {
     const ORDER = BigInt('21888242871839275222246405745257275088696311157297823662689037894645226208583');
@@ -75,34 +69,18 @@ export const getAggSignatureCalldata = (
     return calldata
 }
 
-const { values, positionals } = parseArgs({
-    args: Bun.argv,
-    options: {
-        digest: {
-            type: 'string',
-        },
-    },
-    // strict: true,
-    allowPositionals: true,
-});
-
-
-let sigPoints: ProjPointType<bigint>[] = [];
-let publicPoints: ProjPointType<Fp2>[] = [];
-const Hm = getHm(BigInt(values.digest || "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470"));
-
-for (let i = 0; i < 3; i++) {
-    const privateKey = hexToBytes(testPrivateKey[i]);
-    const { sigPoint, publicPoint } = getSignaturePoint(privateKey, Hm);
-    // console.log(JSON.stringify(sigPoint, (key, value) =>
-    //     typeof value === "bigint" ? numberToHexUnpadded(value) : value,
-    // ));
-    // console.log(JSON.stringify(publicPoint))
-    sigPoints.push(sigPoint);
-    publicPoints.push(publicPoint);
+export const formatPoint = (point: ProjPointType<bigint> | ProjPointType<Fp2>) => {
+    const data = JSON.stringify(point, (key, value) =>
+        typeof value === "bigint" ? numberToHexUnpadded(value) : value,
+    );
+    return data
 }
 
-const aggSignature = getAggSignature(sigPoints);
-const result = verifySignature(aggSignature, publicPoints, Hm);
-// console.log(result);
-process.stdout.write(bytesToHex(getAggSignatureCalldata(aggSignature, publicPoints, Hm)))
+const Hm = getHm(BigInt("0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470"));
+
+const privateKey = hexToBytes(testPrivateKey);
+const { sigPoint, publicPoint } = getSignaturePoint(privateKey, Hm);
+
+console.log(publicPoint)
+console.log(formatPoint(sigPoint))
+console.log(formatPoint(publicPoint))
